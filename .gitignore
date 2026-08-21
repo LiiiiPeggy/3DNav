@@ -1,0 +1,11 @@
+# ROS 2 构建产物（colcon）
+scan_planner/build/
+scan_planner/install/
+scan_planner/log/
+
+# 代码图工具缓存
+.codegraph/
+
+# Python
+__pycache__/
+*.pyc
