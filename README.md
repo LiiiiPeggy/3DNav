@@ -1,18 +1,20 @@
 # 3dnav 工作空间
 
-本目录包含**三个相互独立的工作空间**：两个 ROS 2 colcon 工作空间（基于
-[SCAN-Planner](https://github.com/wuyi2121/SCAN-Planner)，面向路线引导四足长程导航的
-空间碰撞感知局部规划器，ROS 2 Humble / C++17 移植版），以及一个 ROS 1 Noetic 参考项目
-`leg_3dnav`（PCT 全局规划器所在，`pct_` 前缀的出处）。三个目录的上游源码均已**整体纳入
-（vendored）本仓库**：嵌套的 `.git` 已删除，源码树就是普通目录，可直接编辑并提交。
+本目录包含**四个相互独立的工作空间**，涵盖从仿真、真机到跨层全局规划的完整研发链路：
+两个 ROS 2 colcon 工作空间（基于
+[SCAN-Planner](https://github.com/wuyi2121/SCAN-Planner)，ROS 2 Humble / C++17），
+一个 PCT-SCAN-ROS2 一体化导航工程（ROS 2 Humble），以及一个 ROS 1 Noetic 参考项目。
+所有上游源码均已**整体纳入（vendored）本仓库**：嵌套的 `.git` 已删除，源码树就是普通
+目录，可直接编辑并提交。
 
 | 目录 | 系统 | 定位 | 说明 |
 | --- | --- | --- | --- |
 | `scan_planner/` | ROS 2 Humble | **仿真为主** | 完整的原版移植工作空间（含 `build/`、`install/`），运行确定性仿真器 / mockamap / Gazebo Go2 模型 |
-| `pct_scan_planner/` | ROS 2 Humble | **实机验证准备** | 在 scan_planner 基础上接入 FAST-LIO 真机接口；目录名 `pct_` 表示计划后续接入 PCT 规划器（**尚未接入**） |
-| `leg_3dnav/legbot_3D_Nav/` | **ROS 1 Noetic** | **PCT 全局规划参考** | 完整 A1 三维导航项目（FAST-LIO + PCT + EGO/SCAN 局部 + A1 RL），ROS 1 catkin 工作空间 |
+| `scanplanner_fastlio_ros2/` | ROS 2 Humble | **实机验证准备** | 在 scan_planner 基础上接入 FAST-LIO 真机接口 |
+| `pct_scan_ros2/src/PCT-SCAN-ROS2/` | ROS 2 Humble | **PCT+SCAN 一体化导航** | PCT 跨层全局规划 + SCAN 局部 B-spline 的 ROS 2 一体化验证工程（RViz 演示，无 Gazebo） |
+| `pct_scan_fastlio_ros1/legbot_3D_Nav/` | **ROS 1 Noetic** | **PCT 全局规划参考** | 完整 A1 三维导航项目（FAST-LIO + PCT + EGO/SCAN 局部 + A1 RL），ROS 1 catkin 工作空间 |
 
-三个工作空间各自维护自己的 `src/`，构建、source 时不要混用。
+各工作空间各自维护自己的 `src/`，构建、source 时不要混用。
 
 ---
 
@@ -104,12 +106,11 @@ ros2 launch scan_planner run.launch.py \
 
 ---
 
-## 2. `pct_scan_planner/` — 实机验证工作空间
+## 2. `scanplanner_fastlio_ros2/` — 实机验证工作空间
 
-- 源码：`pct_scan_planner/src/SCAN-Planner-Ros2`，源自 `xiaoqi371317/SCAN-Planner-Ros2`
+- 源码：`scanplanner_fastlio_ros2/src/SCAN-Planner-Ros2`，源自 `xiaoqi371317/SCAN-Planner-Ros2`
   （分支 `main`）
-- 在 scan_planner 基础上新增了 FAST-LIO 真机接口；**目录名 `pct_` 表示后续接入 PCT
-  规划器的计划，目前 PCT 尚未接入**，当前实际完成的是 FAST-LIO 真机链路
+- 在 scan_planner 基础上新增了 FAST-LIO 真机接口
 - ⚠️ 本地新增的 FAST-LIO 适配文件（`real_fastlio.launch.py`、`fastlio_pose_adapter.cpp`、
   `fastlio_input_monitor.py`、`planner_app.launch.py` 等）**不在上游、是本仓库独有的**，
   已随本仓库提交
@@ -198,7 +199,7 @@ Cartographer / AMCL / RF2O 等对 `map -> base` 的发布，确保该 TF 只有 
    ros2 launch scan_planner planner_app.launch.py
    ```
 
-   在 App 中选择雷达 / FAST-LIO 终端，以及模式 1/2/3 的“安全预览”或“实机控制”。
+   在 App 中选择雷达 / FAST-LIO 终端，以及模式 1/2/3 的"安全预览"或"实机控制"。
    模式 2 必须给常驻入口提供 `keypoints_file:=`；模式 3 可用 `reference_path_file:=`
    启动内置参考路径发布器，也可等待外部节点发布 `/initial_path`。
 
@@ -216,10 +217,137 @@ ros2 launch scan_planner real_fastlio.launch.py \
 
 ---
 
-## 3. `leg_3dnav/` — ROS 1 参考项目（PCT 全局规划器所在）
+## 3. `pct_scan_ros2/src/PCT-SCAN-ROS2/` — PCT-SCAN-ROS2 一体化导航工程
 
-`leg_3dnav/legbot_3D_Nav/` 与上述两个 ROS 2 工作空间完全独立，是 `pct_` 前缀里 "PCT" 的
-真正出处，也是把 PCT 全局规划 + A1 RL 控制器移植到 ROS 2 Humble 时的参考源。
+克隆自 [yagami-light7/PCT-SCAN-ROS2](https://github.com/yagami-light7/PCT-SCAN-ROS2)，
+已整体纳入本仓库（嵌套 `.git` 已删除）。本工程将 PCT 跨层全局规划器与 SCAN 局部轨迹规划
+合并在 ROS 2 Humble 一体化运行，验证 Building、Plaza、Spiral 三个场景的 RViz 演示。
+
+### 架构与数据流
+
+```text
+PCD 点云
+  ↓  （构建阶段：tomography 脚本）
+PCT tomogram pickle
+  ↓  PCT native 多层 A*（跨 tomogram layer）
+/pct_path (nav_msgs/Path, reliable + transient_local)
+  ↓  pct_scan_bridge（RDP 简化 + 分段线性参考参数化）
+SCAN Mode 3 (initial_path_topic:=/pct_path)
+  ↓  局部 B-spline
+planning/bspline
+  ↓  open_loop 三维执行器 / Go2 RViz 动画
+```
+
+PCT 负责回答"从哪个楼层、经过哪段楼梯/坡道、走到哪里"；SCAN 在全局路线的局部窗口内
+持续生成可跟踪的 B-spline。`pct_scan_bridge` 包从 pickle 读取动态 tomogram 层数，
+修正第三方 wrapper 的固定层数 bug，并通过 `/pct_path` 将 PCT 全局结果接入 SCAN Mode 3。
+
+### ROS 2 包结构
+
+- `src/pct/pct_planner` — PCT 全局规划器（ament_cmake + pybind11 native：`a_star`、
+  `ele_planner`、`py_map_manager`、`traj_opt`）
+- `src/pct/tomography` — tomogram 生成（检查 CUDA，GPU 不可用时改用 NumPy/SciPy）
+- `src/integration/pct_scan_bridge` — Python 桥接节点：复用上游 `PCTPlanner` 节点，
+  动态层数修正、交互 marker（Start/Goal，Z 轴选楼层），发布 `/pct_path`
+- `src/planner/*` — SCAN 局部规划器（plan_manage / bspline_opt / plan_env / path_searching / traj_utils / scan_planner_msgs）
+- `src/simulator/*` — 传感器仿真、地图生成、Go2 URDF 与 RViz 动画
+
+### 环境与构建
+
+```bash
+# 1. 安装 ROS 2 和系统依赖
+sudo apt update
+sudo apt install -y \
+  build-essential cmake ninja-build git curl \
+  python3-colcon-common-extensions python3-rosdep python3-dev python3-pip python3-venv \
+  libboost-all-dev libeigen3-dev \
+  libarmadillo-dev libglew-dev libglfw3-dev \
+  libgl1-mesa-dev libglu1-mesa-dev
+rosdep install --from-paths src --ignore-src -r -y
+
+# 2. 编译 PCT 原生依赖（GTSAM 4.2 + OSQP 1.0，装到 .deps/install）
+./scripts/setup_pct_dependencies.sh
+
+# 3. 构建工作空间
+./scripts/build_workspace.sh
+source install/setup.bash
+```
+
+### 验收
+
+```bash
+./scripts/test_pct_building_astar.sh --force
+./scripts/test_pct_plaza_astar.sh --force
+# 三个场景都打印 [astar] PASS 才说明 PCT native 库已连通
+```
+
+### 快速启动
+
+```bash
+# Building（PCD + pickle 随仓库提供）
+./scripts/launch_pct_scan_building.sh
+# 自动规划默认路线（无需 RViz 交互）
+./scripts/launch_pct_scan_building.sh plan_on_startup:=true
+
+# Plaza（PCD + pickle 随仓库提供）
+./scripts/launch_pct_scan_plaza.sh
+./scripts/launch_pct_scan_plaza.sh plan_on_startup:=true
+
+# Spiral（需先下载资产并生成 tomogram）
+./scripts/fetch_spiral_asset.sh
+./scripts/setup_tomography_env.sh
+./scripts/generate_spiral_tomogram.sh
+./scripts/test_pct_spiral_astar.sh --force
+./scripts/launch_pct_scan_spiral.sh
+```
+
+RViz 打开后选择工具栏中的 `Interact`，拖动绿色 Start 和红色 Goal（跨层时沿蓝色 Z 轴
+把 Goal 放到目标楼层），右键任意 marker 选择 `Plan route`。
+
+终端验收（无 RViz）：
+
+```bash
+./scripts/launch_pct_scan_building.sh \
+  use_rviz:=false plan_on_startup:=true \
+  publish_tomogram:=false enable_interactive_markers:=false
+```
+
+终端应先看到 PCT 发布 `/pct_path`，然后 SCAN 打印 `Received trajectory N`。
+
+### 关键参数
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `controller_mode` | `open_loop` | 跨层必须用 open_loop（三维执行器直接采样 B-spline） |
+| `reference_path_min_distance` | `0.15` | 三维降采样间距 |
+| `reference_path_simplify_tolerance` | `0.1` | RDP 简化容差 |
+| `enable_local_sensing` | `false` | Building 场景建议关闭（楼梯稠密点云会触发碰撞膨胀） |
+| `collision_radius` / `collision_offset` | `0.12` | PCT 标记窄通道可通行，SCAN 用紧凑足迹 |
+
+### 场景资产
+
+- **Building / Plaza**：PCD 和 pickle 随仓库提供，在 `assets/<scene>/` 下
+- **Spiral**：来自 [3D2M-planner](https://github.com/ZJU-FAST-Lab/3D2M-planner)，
+  源仓库无明确资产许可证，Git 不分发其资产，需通过脚本本地下载生成
+
+### 与现有链路的关系
+
+`pct_scan_bridge` 复用 `scan_planner` 包的 `run.launch.py`（Mode 3，
+`initial_path_topic:=/pct_path`），本工程即 `scanplanner_fastlio_ros2` 计划接入的
+PCT 算法的 ROS 2 一体化参考实现。
+
+### 许可
+
+PCT / tomography / bridge 使用 **GPL-2.0-or-later**；SCAN 包继续使用 **Apache-2.0**；
+其他 ROS 包保留各自 `package.xml` 声明的许可。完整映射见
+[`LICENSE`](LICENSE)、[`NOTICE`](NOTICE)、[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+
+---
+
+## 4. `pct_scan_fastlio_ros1/legbot_3D_Nav/` — ROS 1 参考项目
+
+`pct_scan_fastlio_ros1/legbot_3D_Nav/` 与上述三个 ROS 2 工作空间完全独立，是 PCT 全局
+规划的 ROS 1 Noetic 参考源，也是移植到 ROS 2 Humble 时的蓝本。
 
 - 源自 `github.com/Robot-Nav/legbot_3D_Nav`（**ROS 1 Noetic / Ubuntu 20.04 / Gazebo
   Classic 11** 的 catkin 工作空间，非 colcon），已整体纳入本仓库
@@ -246,9 +374,10 @@ A1 RL policy → Gazebo。`/pct_path` 在 `map` 系、局部规划在 `odom` 系
 
 ---
 
-## 4. 测试
+## 5. 测试
 
-`pct_scan_planner` 的 `plan_manage` 注册了 gtest / pytest / launch 测试：
+`scan_planner` 和 `scanplanner_fastlio_ros2` 的 `plan_manage` 注册了 gtest / pytest /
+launch 测试：
 
 ```bash
 # 在对应工作空间根目录（src/ 所在目录）执行
@@ -259,19 +388,28 @@ colcon test --packages-select scan_planner
 `test_reference_path_publisher_unit`（pytest）、`test_planner_startup`、
 `test_reference_path_publisher_launch`、`test_waypoint_parameters`（launch 测试）。
 
-## 5. 工具
+`pct_scan_ros2` 的验收测试见各场景的 `test_pct_*_astar.sh` 脚本。
+
+## 6. 工具
 
 - 关键点记录器：`ros2 run scan_planner keypoint_recorder.py --output keypoints.yaml`
-  （生成 `fsm.waypoints` 参数 YAML，供 `navi_mode:=2` 使用；`pct_scan_planner` 版可
-  用 `--odom` 指定里程计话题）
+  （生成 `fsm.waypoints` 参数 YAML，供 `navi_mode:=2` 使用；`scanplanner_fastlio_ros2`
+  版可用 `--odom` 指定里程计话题）
 - 参考路径发布器：`ros2 run scan_planner reference_path_publisher.py --ros-args
   --params-file .../reference_path.map.yaml`
 
-## 6. 致谢与许可
+## 7. 致谢与许可
 
-两个 ROS 2 工作空间均衍生自 [SCAN-Planner](https://github.com/wuyi2121/SCAN-Planner)
+两个 ROS 2 SCAN-Planner 工作空间均衍生自 [SCAN-Planner](https://github.com/wuyi2121/SCAN-Planner)
 （作者 Han Zheng、Zhe Chen、Yiwen Fu、Ming Yang、Tong Qin），Apache License 2.0；
 实现借鉴了 EGO-Planner、ROG-Map、MARSIM、Mockamap 与 Leg-KILO，真实机器人定位基于
-Elevator-LIO / FAST-LIO2。`leg_3dnav` 源自
-[Robot-Nav/legbot_3D_Nav](https://github.com/Robot-Nav/legbot_3D_Nav)（Apache License 2.0），
-内部含 FAST-LIO、PCT、unitree_guide 等上游组件。分发或派生时请保留各仓库 `LICENSE` 与 `NOTICE`。
+Elevator-LIO / FAST-LIO2。
+
+`pct_scan_ros2` 克隆自 [yagami-light7/PCT-SCAN-ROS2](https://github.com/yagami-light7/PCT-SCAN-ROS2)，
+PCT planner 来自 [byangw/PCT_planner](https://github.com/byangw/PCT_planner)（GPL-2.0-or-later），
+PCT ROS 2 移植来源为 [2473o/PCT_planner](https://github.com/2473o/PCT_planner/tree/feat/ros2pkg)。
+
+`pct_scan_fastlio_ros1` 源自 [Robot-Nav/legbot_3D_Nav](https://github.com/Robot-Nav/legbot_3D_Nav)
+（Apache License 2.0），内部含 FAST-LIO、PCT、unitree_guide 等上游组件。
+
+分发或派生时请保留各仓库 `LICENSE` 与 `NOTICE`。

@@ -1,0 +1,34 @@
+PCT-SCAN-ROS2
+Copyright 2026 PCT-SCAN-ROS2 contributors
+
+This repository combines and modifies two research codebases.
+
+  SCAN-Planner
+  https://github.com/wuyi2121/SCAN-Planner
+
+Original research authors:
+  Han Zheng, Zhe Chen, Yiwen Fu, Ming Yang, and Tong Qin
+
+Original project:
+  SCAN-Planner: Spatial Collision-Aware Local Planning for
+  Route-Guided Long-Range Quadruped Navigation
+  https://arxiv.org/abs/2606.19555
+
+The upstream project is licensed under the Apache License, Version 2.0.
+This derivative preserves that license and adds ROS 2 Humble, Ubuntu 22.04,
+ament_cmake, colcon, rclcpp, RViz2, tf2_ros and ROS 2 launch integration.
+
+PCT planner
+  https://github.com/byangw/PCT_planner
+  Copyright (c) 2024 Bowen Yang and Jie Cheng
+  GPL-2.0-or-later; original notice retained in src/pct/NOTICE
+
+ROS 2 PCT port lineage
+  https://github.com/2473o/PCT_planner/tree/feat/ros2pkg
+
+PCT-SCAN-ROS2 modifications include ROS 2 packaging, relocatable PCT assets,
+dynamic tomogram layers, interactive 3-D endpoints, clearance-biased A*, the
+PCT-to-SCAN route bridge, multi-scene launch files, and visual Go2 execution.
+
+The upstream authors and maintainers are not affiliated with, and do not
+necessarily endorse, this combined project.

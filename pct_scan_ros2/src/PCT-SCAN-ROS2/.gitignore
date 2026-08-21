@@ -1,0 +1,62 @@
+# ROS 2 / colcon build products
+/build/
+/install/
+/log/
+/devel/
+/.colcon/
+/.cache/
+/.deps/
+/.venv-tomography/
+/compile_commands.json
+/symlink_install_manifest.txt
+
+# ROS runtime state
+/.ros/
+*.bag
+*.db3
+*.mcap
+
+# Python cache and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor and operating-system files
+/.vscode/
+/.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Locally copied legacy dependencies. The ROS 2 build uses system GLFW, GLEW,
+# OpenGL and GLM packages instead; see README.md for installation commands.
+/src/simulator/local_sensing/third_party/
+/src/simulator/local_sensing/include/GL/
+/src/simulator/local_sensing/include/glad/
+/src/simulator/local_sensing/include/glad.c
+/src/simulator/local_sensing/include/glm/
+
+/assets/gif
+
+# Native build artifacts
+*.o
+*.obj
+*.a
+*.so
+*.so.*
+*.dylib
+*.dll
+
+# Keep the legacy NumPy-2 pickle out of the release; the portable ROS 2
+# equivalent is assets/building/tomogram/building2_9_ros2.pickle.
+/assets/building/tomogram/building2_9.pickle
+
+# The 3D2M repository does not currently publish an explicit asset license.
+# Download/generate these locally through the scripts documented in README.
+/assets/spiral/pcd/*.pcd
+/assets/spiral/tomogram/*.pickle
+/assets/spiral/routes/*.csv

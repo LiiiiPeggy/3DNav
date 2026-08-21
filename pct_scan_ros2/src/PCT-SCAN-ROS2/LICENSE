@@ -1,0 +1,24 @@
+PCT-SCAN-ROS2 is a multi-license source distribution.
+
+There is no single license that replaces the licenses of every included
+component.  Each ROS package and vendored source subtree retains its upstream
+license:
+
+* SCAN planner and most simulator packages: Apache License 2.0
+* Vendored PCT planner, tomography, and pct_scan_bridge: GPL-2.0-or-later
+* local_sensing_node and mockamap: GPL-3.0-only, as declared by those packages
+* Go2 description and utility packages: BSD-3-Clause, as declared by those
+  packages
+
+The complete Apache-2.0, GPL-2.0 and GPL-3.0 license texts are in LICENSES/.
+Copyright notices, upstream links, and modification notes are in NOTICE,
+src/pct/NOTICE, and the source files themselves.
+
+Scene data and generated assets are licensed separately from the software.
+See each assets/<scene>/README.md before redistributing them.  In particular,
+the Spiral source repository does not currently state an explicit license, so
+the Spiral PCD and derived tomogram are deliberately excluded from Git and are
+downloaded/generated locally.
+
+SPDX package expressions are recorded in each package.xml.  This file is a
+license map, not legal advice and not an attempt to relicense upstream work.

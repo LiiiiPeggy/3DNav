@@ -4,27 +4,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概况
 
-`/home/yu/3dnav` 下是**三个相互独立的工作空间**，构建与 `source` 绝不能混用：
+`/home/yu/3DNav` 下是**四个相互独立的工作空间**，构建与 `source` 绝不能混用：
 
 | 目录 | 系统 | 定位 |
 | --- | --- | --- |
 | `scan_planner/` | ROS 2 Humble colcon | 仿真为主，SCAN-Planner 完整移植（有 `build/`、`install/`、`log/`） |
-| `pct_scan_planner/` | ROS 2 Humble colcon | 实机验证准备，接入 FAST-LIO 真机接口（尚未构建） |
-| `leg_3dnav/legbot_3D_Nav/` | **ROS 1 Noetic catkin** | 完整 A1 三维导航项目，**PCT 全局规划器所在**（第三个、已整体纳入） |
+| `scanplanner_fastlio_ros2/` | ROS 2 Humble colcon | 实机验证准备，接入 FAST-LIO 真机接口（尚未构建） |
+| `pct_scan_ros2/src/PCT-SCAN-ROS2/` | ROS 2 Humble colcon | PCT 跨层全局规划 + SCAN 局部 B-spline 一体化导航验证工程 |
+| `pct_scan_fastlio_ros1/legbot_3D_Nav/` | **ROS 1 Noetic catkin** | 完整 A1 三维导航项目，PCT 全局规划的 ROS 1 参考源 |
 
-两个 ROS 2 工作空间都基于 [SCAN-Planner](https://github.com/wuyi2121/SCAN-Planner)
-（面向路线引导四足长程导航的空间碰撞感知局部规划器，ROS 2 Humble / C++17）。三个目录里
-的上游源码都已**整体纳入（vendored）本仓库**：嵌套的 `.git` 已删除，源码树就是普通目录，
+所有上游源码都已**整体纳入（vendored）本仓库**：嵌套的 `.git` 已删除，源码树就是普通目录，
 可直接编辑并提交，**无需 `git submodule update`**：
 
 - **`scan_planner/`** — 源码在 `scan_planner/src/SCAN-Planner`（源自 `wuyi2121/SCAN-Planner`，
   分支 `ros2-community`）。
-- **`pct_scan_planner/`** — 源码在 `pct_scan_planner/src/SCAN-Planner-Ros2`
-  （源自 `xiaoqi371317/SCAN-Planner-Ros2`，分支 `main`）。已接入 FAST-LIO 真机接口；
-  目录名 `pct_` 是接入 PCT 规划器的计划，**PCT 尚未接入此工作空间**（真正的 PCT 在
-  `leg_3dnav` 里）。本地新增的 FAST-LIO 适配文件（`real_fastlio.launch.py`、
-  `fastlio_pose_adapter.cpp`、`fastlio_input_monitor.py`、`planner_app.launch.py` 等）
-  **不在上游、是本仓库独有的**，已提交进本仓库。
+- **`scanplanner_fastlio_ros2/`** — 源码在 `scanplanner_fastlio_ros2/src/SCAN-Planner-Ros2`
+  （源自 `xiaoqi371317/SCAN-Planner-Ros2`，分支 `main`）。已接入 FAST-LIO 真机接口。
+  本地新增的 FAST-LIO 适配文件（`real_fastlio.launch.py`、`fastlio_pose_adapter.cpp`、
+  `fastlio_input_monitor.py`、`planner_app.launch.py` 等）**不在上游、是本仓库独有的**，
+  已提交进本仓库。
+- **`pct_scan_ros2/src/PCT-SCAN-ROS2/`** — 克隆自 `yagami-light7/PCT-SCAN-ROS2`。
+  PCT 跨层全局规划 + SCAN 局部轨迹规划的 ROS 2 一体化验证工程（RViz 演示，无 Gazebo）。
+  `pct_scan_bridge` 包将 PCT 的 `/pct_path` 接入 SCAN Mode 3。
+- **`pct_scan_fastlio_ros1/legbot_3D_Nav/`** — 源自 `github.com/Robot-Nav/legbot_3D_Nav`
+  的 ROS 1 参考实现。⚠️ 本机只有 ROS 2 Humble，**当前无法构建**，仅作移植参考。
 
 ## 常用命令（ROS 2 工作空间）
 
@@ -38,8 +41,19 @@ source install/setup.bash
 
 - 默认 CPU 后端；OpenGL 后端加 `-DUSE_GPU=ON`（依赖系统 GLFW/GLEW/OpenGL，仓库不再带 x86_64 GLFW 库）。
 - 系统依赖：`libarmadillo-dev libglew-dev libglfw3-dev libgl1-mesa-dev libglu1-mesa-dev`。
-- 构建 `pct_scan_planner` 的真机场景前必须**先 source 外部驱动工作空间**（如 Livox：
+- 构建 `scanplanner_fastlio_ros2` 的真机场景前必须**先 source 外部驱动工作空间**（如 Livox：
   `source /home/w/ws_livox/install/setup.bash`），否则 `fast_lio` 找不到 `livox_ros_driver2`。
+
+### PCT-SCAN-ROS2 构建（特殊流程）
+
+```bash
+cd pct_scan_ros2/src/PCT-SCAN-ROS2
+./scripts/setup_pct_dependencies.sh        # GTSAM 4.2 + OSQP 1.0 → .deps/install
+./scripts/build_workspace.sh               # colcon build
+source install/setup.bash                  # bash; zsh 用户用 setup.zsh
+```
+
+验收：`./scripts/test_pct_building_astar.sh --force` 等三个场景都打印 `[astar] PASS`。
 
 ### 运行
 
@@ -51,7 +65,7 @@ ros2 launch scan_planner run.launch.py is_real_world:=false navi_mode:=1 \
   sensor_type:=lidar controller_mode:=closed_loop use_gpu:=false
 ```
 
-真机（`pct_scan_planner` 独有）：
+真机（`scanplanner_fastlio_ros2` 独有）：
 
 ```bash
 # 传感器验收（不运动）
@@ -63,14 +77,23 @@ ros2 launch scan_planner real_fastlio.launch.py start_fastlio:=false \
 ros2 launch scan_planner planner_app.launch.py
 ```
 
+PCT-SCAN-ROS2（`pct_scan_ros2/src/PCT-SCAN-ROS2`）：
+
+```bash
+./scripts/launch_pct_scan_building.sh                # Building 场景
+./scripts/launch_pct_scan_building.sh plan_on_startup:=true  # 自动规划默认路线
+./scripts/launch_pct_scan_plaza.sh                   # Plaza 场景
+./scripts/launch_pct_scan_spiral.sh                  # Spiral（需先 fetch_spiral_asset.sh）
+```
+
 ### 测试
 
 ```bash
 colcon test --packages-select scan_planner
 ```
 
-两个 ROS 2 工作空间的 `plan_manage` 都注册了 gtest（`test_reference_path_utils`）、pytest
-（`test_reference_path_publisher_unit`）和 launch 测试（`test_planner_startup`、
+两个 ROS 2 SCAN-Planner 工作空间的 `plan_manage` 都注册了 gtest（`test_reference_path_utils`）、
+pytest（`test_reference_path_publisher_unit`）和 launch 测试（`test_planner_startup`、
 `test_reference_path_publisher_launch`、`test_waypoint_parameters`）。
 
 ## 架构（ROS 2 工作空间）
@@ -80,7 +103,7 @@ navi_mode 1/2/3 触发重规划）→ `planner_manager`（编排）→ 前端 `p
 → 后端 `bspline_opt`（均匀 B 样条轨迹优化）→ 发布 `planning/bspline`，由
 `open_loop_controller` / `closed_loop_controller` 跟踪。
 
-`src/planner/` 下的包（两 ROS 2 工作空间结构相同）：
+`src/planner/` 下的包（scan_planner / scanplanner_fastlio_ros2 / pct_scan_ros2 结构相同）：
 
 - `plan_manage` — 主包：`scan_planner_node`、`scan_replan_fsm`、`planner_manager`、
   两个控制器、`go2_kinematic_sim` / `go2_gait_publisher`（仿真）、`launch/`、`config/`、`scripts/`
@@ -95,6 +118,26 @@ navi_mode 1/2/3 触发重规划）→ `planner_manager`（编排）→ 前端 `p
 
 参数在 `plan_manage/config/` 下三个 YAML（`planner.yaml`、`controllers.yaml`、
 `simulator.yaml`），ROS 2 参数用点号分隔（如 `grid_map.resolution`、`fsm.navi_mode`）。
+
+## 架构（PCT-SCAN-ROS2）
+
+PCT-SCAN-ROS2 将 PCT 跨层全局规划与 SCAN 局部轨迹规划在 ROS 2 Humble 一体化运行：
+
+```text
+PCD 点云 → PCT tomogram pickle → PCT native 多层 A*
+→ /pct_path (nav_msgs/Path, reliable+transient_local)
+→ pct_scan_bridge（动态层数修正 + RDP 简化 + 分段线性参考）
+→ SCAN Mode 3 (initial_path_topic:=/pct_path)
+→ 局部 B-spline → planning/bspline → open_loop 执行器 / Go2 RViz 动画
+```
+
+`pct_scan_bridge`（`src/integration/pct_scan_bridge/`，Python ament 包）复用上游
+`PCTPlanner` 节点，修正固定层数 bug，提供交互 marker（Start/Goal，Z 轴选楼层），
+发布 `/pct_path`。`pct_planner`（`src/pct/pct_planner/`）通过 pybind11 暴露
+native A* / ele_planner / py_map_manager / traj_opt。
+
+场景：Building（跨层约 14m）、Plaza（37m 平面）、Spiral（38m 螺旋坡道）。
+Building / Plaza 资产随仓库提供；Spiral 需脚本下载生成。
 
 ## 关键差异与注意点（ROS 2）
 
@@ -122,19 +165,20 @@ navi_mode 1/2/3 触发重规划）→ `planner_manager`（编排）→ 前端 `p
   路径文件的 `z` 是地面/路线高度，规划后机身高度约为其 + body_height）；发布器
   `reference_path_publisher.py` 等待首个 `body_pose` 且订阅者就绪后才发布一次
   `/initial_path`（TRANSIENT_LOCAL）。
+- **PCT-SCAN-ROS2 特殊参数**：`controller_mode` 默认 `open_loop`（跨层必须三维执行器）；
+  `enable_local_sensing` 建议关闭（楼梯稠密点云触发碰撞膨胀）；
+  `collision_radius`/`collision_offset` = 0.12（PCT 标记窄通道可通行，SCAN 用紧凑足迹）。
 
-## `leg_3dnav` — 第三个项目（ROS 1，PCT 全局规划器所在）
+## `pct_scan_fastlio_ros1` — ROS 1 参考项目
 
-`leg_3dnav/legbot_3D_Nav/` 与上述两个 ROS 2 工作空间完全独立，是 `pct_` 前缀里 "PCT"
-的真正出处：
+`pct_scan_fastlio_ros1/legbot_3D_Nav/` 与上述三个 ROS 2 工作空间完全独立，是 PCT 全局
+规划的 ROS 1 参考源：
 
-- 源自 `github.com/Robot-Nav/legbot_3D_Nav` 的 ROS 1 参考实现，已整体纳入本仓库（嵌套
-  `.git` 已删除，不再是独立克隆/子模块）。
+- 源自 `github.com/Robot-Nav/legbot_3D_Nav`，已整体纳入本仓库（嵌套 `.git` 已删除）。
 - **ROS 1 Noetic / Ubuntu 20.04 / Gazebo Classic 11** 的 catkin 工作空间
   （`src/CMakeLists.txt` symlink 到 catkin toplevel.cmake，不是 colcon）。
-- ⚠️ **本机只装了 ROS 2 Humble**（`/opt/ros` 下只有 humble，无 `catkin_make`，noetic symlink
-  是断的）——**当前无法在本机构建**。它是移植参考源：把 PCT 全局规划 + A1 RL 控制器的 ROS 1
-  实现移植到 Humble 时以它为蓝本，不要试图在本机 `catkin build` 它。
+- ⚠️ **本机只装了 ROS 2 Humble**（无 `catkin_make`，noetic symlink 是断的）——
+  **当前无法在本机构建**。它是移植参考源。
 
 ### 结构与数据流
 
