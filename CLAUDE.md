@@ -10,18 +10,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | --- | --- | --- |
 | `scan_planner/` | ROS 2 Humble colcon | 仿真为主，SCAN-Planner 完整移植（有 `build/`、`install/`、`log/`） |
 | `pct_scan_planner/` | ROS 2 Humble colcon | 实机验证准备，接入 FAST-LIO 真机接口（尚未构建） |
-| `leg_3dnav/legbot_3D_Nav/` | **ROS 1 Noetic catkin** | 完整 A1 三维导航项目，**PCT 全局规划器所在**（第三个、独立 git 克隆） |
+| `leg_3dnav/legbot_3D_Nav/` | **ROS 1 Noetic catkin** | 完整 A1 三维导航项目，**PCT 全局规划器所在**（第三个、已整体纳入） |
 
 两个 ROS 2 工作空间都基于 [SCAN-Planner](https://github.com/wuyi2121/SCAN-Planner)
-（面向路线引导四足长程导航的空间碰撞感知局部规划器，ROS 2 Humble / C++17）：
+（面向路线引导四足长程导航的空间碰撞感知局部规划器，ROS 2 Humble / C++17）。三个目录里
+的上游源码都已**整体纳入（vendored）本仓库**：嵌套的 `.git` 已删除，源码树就是普通目录，
+可直接编辑并提交，**无需 `git submodule update`**：
 
-- **`scan_planner/`** — 源码在 `scan_planner/src/SCAN-Planner`（remote `wuyi2121/SCAN-Planner`，
+- **`scan_planner/`** — 源码在 `scan_planner/src/SCAN-Planner`（源自 `wuyi2121/SCAN-Planner`，
   分支 `ros2-community`）。
 - **`pct_scan_planner/`** — 源码在 `pct_scan_planner/src/SCAN-Planner-Ros2`
-  （remote `xiaoqi371317/SCAN-Planner-Ros2`，分支 `main`）。已接入 FAST-LIO 真机接口；
+  （源自 `xiaoqi371317/SCAN-Planner-Ros2`，分支 `main`）。已接入 FAST-LIO 真机接口；
   目录名 `pct_` 是接入 PCT 规划器的计划，**PCT 尚未接入此工作空间**（真正的 PCT 在
-  `leg_3dnav` 里）。注意此目录有未提交的本地改动和新增文件（`real_fastlio.launch.py`、
-  `fastlio_pose_adapter.cpp`、`fastlio_input_monitor.py`、`planner_app.launch.py` 等）。
+  `leg_3dnav` 里）。本地新增的 FAST-LIO 适配文件（`real_fastlio.launch.py`、
+  `fastlio_pose_adapter.cpp`、`fastlio_input_monitor.py`、`planner_app.launch.py` 等）
+  **不在上游、是本仓库独有的**，已提交进本仓库。
 
 ## 常用命令（ROS 2 工作空间）
 
@@ -125,8 +128,8 @@ navi_mode 1/2/3 触发重规划）→ `planner_manager`（编排）→ 前端 `p
 `leg_3dnav/legbot_3D_Nav/` 与上述两个 ROS 2 工作空间完全独立，是 `pct_` 前缀里 "PCT"
 的真正出处：
 
-- 独立 git 克隆（remote `github.com/Robot-Nav/legbot_3D_Nav`，自己的 `.git`），被外层
-  `/home/yu/3dnav` 的 git 视为未跟踪目录。
+- 源自 `github.com/Robot-Nav/legbot_3D_Nav` 的 ROS 1 参考实现，已整体纳入本仓库（嵌套
+  `.git` 已删除，不再是独立克隆/子模块）。
 - **ROS 1 Noetic / Ubuntu 20.04 / Gazebo Classic 11** 的 catkin 工作空间
   （`src/CMakeLists.txt` symlink 到 catkin toplevel.cmake，不是 colcon）。
 - ⚠️ **本机只装了 ROS 2 Humble**（`/opt/ros` 下只有 humble，无 `catkin_make`，noetic symlink
