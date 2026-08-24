@@ -16,9 +16,21 @@ mkdir -p "$DEPS_ROOT" "$SOURCE_ROOT" "$BUILD_ROOT"
 clone_if_missing() {
   local source_dir="$1"
   shift
-  if [[ ! -d "$source_dir/.git" ]]; then
-    git clone --recursive --depth 1 "$@" "$source_dir"
+
+  # 已经是一个 git 仓库（.git 目录或文件）→ 直接跳过
+  if [[ -e "$source_dir/.git" ]]; then
+    return 0
   fi
+
+  # 目录存在但缺少 .git：可能是克隆中断的残留，也可能是被"vendor 化"删掉了
+  # 嵌套 .git 的源码。非空残留会让 git clone 拒绝（"already exists and is not
+  # an empty directory"），所以先清掉再重新克隆；空目录 git 允许直接克隆。
+  if [[ -d "$source_dir" ]] && [[ -n "$(ls -A "$source_dir" 2>/dev/null)" ]]; then
+    echo "[pct-scan] '$source_dir' 已存在但缺少 .git，视为残留，删除后重新克隆" >&2
+    rm -rf "$source_dir"
+  fi
+
+  git clone --recursive --depth 1 "$@" "$source_dir"
 }
 
 clone_if_missing "$SOURCE_ROOT/gtsam-4.2" \

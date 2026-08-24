@@ -14,6 +14,15 @@ if [[ ! -d "$PCT_DEPS_ROOT/osqp-1.0.0/lib/cmake/osqp" ]]; then
   exit 2
 fi
 
+# 构建必须使用系统 Python：conda base 激活时其 python3 缺少 ament 需要的
+# catkin_pkg，会让 package.xml 解析直接失败。这里临时摘除 conda 的 bin。
+if [[ -n "${CONDA_PREFIX:-}" ]]; then
+  echo "[pct-scan] conda 已激活（${CONDA_PREFIX}），临时移除其 bin 以使用系统 Python"
+  _pct_sys_path="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vx "${CONDA_PREFIX}/bin" | paste -sd: || true)"
+  PATH="${_pct_sys_path:-$PATH}"
+  unset _pct_sys_path CONDA_PREFIX CONDA_DEFAULT_ENV
+fi
+
 set +u
 source /opt/ros/humble/setup.bash
 set -u
