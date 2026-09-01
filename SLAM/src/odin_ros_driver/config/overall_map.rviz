@@ -1,0 +1,54 @@
+# ################################
+# YAML: SLAM standalone saved-map viewer
+# ################################
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    # ################################
+    # YAML: disable Grid in saved-map viewer
+    # ################################
+    - Class: rviz_default_plugins/Grid
+      Enabled: false
+      Name: Grid
+      Value: false
+    # ################################
+    # YAML: configure OverallMap display for saved-map viewing
+    # ################################
+    - Alpha: 0.3
+      Axis: Z
+      Class: rviz_default_plugins/PointCloud2
+      Color Transformer: AxisColor
+      Decay Time: 0
+      Enabled: true
+      Name: OverallMap
+      Position Transformer: XYZ
+      Selectable: false
+      Size (Pixels): 1
+      Style: Points
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /overall_map
+  Global Options:
+    Background Color: 0; 0; 0
+    Fixed Frame: odin_map
+    Frame Rate: 15
+  # ################################
+  # YAML: enable camera interaction in standalone map viewer
+  # ################################
+  Tools:
+    - Class: rviz_default_plugins/MoveCamera
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+      Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit

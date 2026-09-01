@@ -1,2 +1,0 @@
-# PCT-planner is built by src/PCT_planner/planner/build*.sh.
-# Keep its standalone third-party CMake projects out of catkin_make discovery.

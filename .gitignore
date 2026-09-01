@@ -12,6 +12,11 @@ pct_scan_ros2/src/PCT-SCAN-ROS2/log/
 pct_scan_ros2/src/PCT-SCAN-ROS2/.deps/
 pct_scan_ros2/src/PCT-SCAN-ROS2/.venv-tomography/
 
+# SLAM（Odin）构建产物
+SLAM/build/
+SLAM/install/
+SLAM/log/
+
 # ROS 1 构建产物（catkin）
 pct_scan_fastlio_ros1/build/
 pct_scan_fastlio_ros1/devel/

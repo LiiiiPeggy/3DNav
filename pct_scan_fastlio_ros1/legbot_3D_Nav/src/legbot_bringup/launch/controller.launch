@@ -1,3 +1,0 @@
-<launch>
-  <node pkg="unitree_guide" type="junior_ctrl" name="junior_ctrl" output="screen" required="true"/>
-</launch>
