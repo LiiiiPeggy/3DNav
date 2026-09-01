@@ -2,33 +2,49 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 `pct_scan_ros2/src/PCT-SCAN-ROS2` 规划器接口从 `/LIO/*` 遗留话题对齐到 Odin SLAM 的 `/registered_scan` + `/state_estimation`，实现无全局地图（map-free local navigation）的实时局部避障（阶段 A）。
+**Goal:** 把 `pct_scan_ros2/src/PCT-SCAN-ROS2` 从原有 LIO 接口适配到 Odin SLAM：输入 `/registered_scan` + `/state_estimation`，输出 `/cmd_vel`，实现 Go2 真机部署前的 map-free local navigation（无全局地图局部导航）。
 
-**Architecture:** 提取纯函数 `_compute_topics()` 与 `_should_publish_robot_state()` 统一真实/仿真话题与坐标帧决策；`run.launch.py` 新增可覆盖 launch 参数（Odin 默认值）；真实分支不启动 `go2_robot_state_publisher`；新增 `launch_pct_scan_real.sh` 一行拉起。SCAN 核心算法、GridMap、轨迹优化、控制器一律零修改。控制链冻结为 Go2 已验证的 `/cmd_vel`（不做额外抽象层）。
+**Architecture:** 纯函数独立到无 ROS 依赖的 `launch/topic_resolver.py`（`_compute_topics` + `_should_publish_robot_state`）；`run.launch.py` 只声明参数、调用 resolver、创建 Node；真实分支 Odin 默认话题；`go2_robot_state_publisher` 条件化；速度接口统一冻结为 `/cmd_vel`。SCAN 核心算法、GridMap、轨迹优化、控制器零修改。
 
-**Tech Stack:** ROS 2 Humble / launch（Python）、PyYAML、pytest（`ament_add_pytest_test`）、bash。
+**Tech Stack:** ROS 2 Humble / launch（Python）、pytest（`ament_add_pytest_test`）、bash。
 
-**Spec:** [docs/superpowers/specs/2026-09-01-odin-slam-pct-scan-interface-design.md](../../specs/2026-09-01-odin-slam-pct-scan-interface-design.md)（执行者需同时阅读 spec 与计划）
+**Spec:** [docs/superpowers/specs/2026-09-01-odin-slam-pct-scan-interface-design.md](../../specs/2026-09-01-odin-slam-pct-scan-interface-design.md)（执行者需同时阅读；本计划按 ZBNav 实机经验收敛，接口冻结 `/cmd_vel` 覆盖 spec §9 中 `cmd_vel_topic` 的早期提法）
 
-**重点原则：接口迁移优先，算法零修改；验证真实链路优先，避免过度工程化。**
+**重点原则：接口迁移优先，算法零修改；真实链路优先，避免过度工程化。不引入额外抽象层。**
+
+**最终架构（冻结）：**
+
+```text
+Odin SLAM
+  ├─ /registered_scan   (sensor_msgs/msg/PointCloud2, odom帧)
+  └─ /state_estimation  (nav_msgs/msg/Odometry, odom帧)
+          ↓
+    PCT-SCAN-ROS2 (scan_planner_node + closed_loop_controller)
+          ↓
+        /cmd_vel (geometry_msgs/msg/Twist)
+          ↓
+          Go2
+```
 
 ## Global Constraints
 
 - 真实分支话题映射：`body_pose ← /state_estimation`、`sensor_pose ← /state_estimation`、`cloud ← /registered_scan`。
-- 真实分支 `grid_map.cloud_is_world=true`、`grid_map.need_extrinsic=false` —— **前提**：`/registered_scan` 点云坐标已在 odom/world 帧（Task 0 验证）。若帧不一致，禁止使用 `cloud_is_world=true`，需 TF 转换节点或点云转换适配器（**当前不实现**）。
-- **接口冻结**（Go2 + ZBNav 已验证链路，不增加抽象层）：
+- 真实分支 `grid_map.cloud_is_world=true`、`grid_map.need_extrinsic=false` —— **前提**：`/registered_scan` 已在 odom/world 帧（Task 0 验证）。帧不一致则禁止 `cloud_is_world=true`，需 TF/点云转换节点（**当前不实现**）。
+- **接口冻结**（Go2 + ZBNav 已验证链路，统一不区分真实/仿真）：
 
   | Interface | Topic | Message |
   |---|---|---|
   | Velocity command | `/cmd_vel` | `geometry_msgs/msg/Twist` |
 
-- **阶段 A 真实分支仅支持 `sensor_type=lidar`**；`is_real_world=true` 搭配 `sensor_type=depth` 必须报错。
-- 真实分支**不启动** `go2_robot_state_publisher`（真机狗有自己的 TF/URDF）；仿真默认启动。
-- odom 帧 = planner 世界帧，阶段 A **不使用 TF**。
-- **不修改**：`scan_replan_fsm`/`planner_manager`、`plan_env`（GridMap 算法）、`path_searching`、`bspline_opt`、`closed_loop_controller`。
+- **阶段 A 真实分支仅支持 `sensor_type=lidar`**；`is_real_world=true` 搭配 `sensor_type=depth` 必须抛 `ValueError`。
+- 真实分支**不启动** `go2_robot_state_publisher`（真机狗自有 TF/URDF）；仿真默认启动。
+- `odom` = planner 世界帧；阶段 A 不做 TF lookup / 坐标转换；`world_frame` 仅预留。
+- `_compute_topics` 返回**仅 5 个键**：`body_pose, sensor_pose, cloud, cloud_is_world, need_extrinsic`（depth/intrinsics 留给阶段 B）。
+- `topic_resolver.py` **无 ROS import、无 LaunchContext、无 Node 创建**，可独立 pytest。
+- **不修改**：`scan_replan_fsm`/`planner_manager`、`plan_env`、`path_searching`、`bspline_opt`、`closed_loop_controller`。
 - 不假设 Odin QoS 兼容（spec §6），Task 0 实测记录。
-- 测试用 `PYTHON_EXECUTABLE /usr/bin/python3`（本机 ROS 2 用系统 python，勿用 conda python）。
-- 测试只覆盖轻量纯函数与文件契约，**不测试 launch 执行/Node 结构**。
+- 测试用 `PYTHON_EXECUTABLE /usr/bin/python3`（避开 conda python）。
+- 只测轻量纯函数与文件契约，**不测 launch 执行 / _setup / Node 结构**。
 
 ---
 
@@ -36,150 +52,116 @@
 
 | 文件 | 责任 |
 | --- | --- |
-| `src/planner/plan_manage/launch/run.launch.py` | **修改**：新增 5 个 launch 参数（`body_pose_topic`、`sensor_pose_topic`、`cloud_topic`、`world_frame`、`publish_robot_state`）；提取并接线 `_compute_topics()`、`_should_publish_robot_state()`；真实分支 Odin 默认话题；`go2_robot_state_publisher` 条件化；`cmd_vel` 固定 `/cmd_vel`（无参数化） |
-| `src/planner/plan_manage/test/test_run_launch_topics.py` | **新建**：纯函数单测（`_compute_topics`、`_should_publish_robot_state`） |
+| `src/planner/plan_manage/launch/topic_resolver.py` | **新建**：纯函数 `_compute_topics` + `_should_publish_robot_state`（无 ROS import） |
+| `src/planner/plan_manage/launch/run.launch.py` | **修改**：`sys.path` 导入 resolver；新增 5 个 launch 参数（`body_pose_topic`/`sensor_pose_topic`/`cloud_topic`/`world_frame`/`publish_robot_state`）；真实分支 Odin 默认话题；rsp 条件化；`cmd_vel` 统一 `/cmd_vel` |
+| `src/planner/plan_manage/test/test_topic_resolver.py` | **新建**：纯函数单测（real lidar / real depth 报错 / should_publish） |
 | `scripts/launch_pct_scan_real.sh` | **新建**：真实启动脚本（复用 `_pct_scan_env.sh`，透传 `"$@"`） |
 | `src/planner/plan_manage/test/test_launch_pct_scan_real.py` | **新建**：文件契约测试（存在/可执行/关键参数，不执行 launch） |
-| `src/planner/plan_manage/CMakeLists.txt` | **修改**：注册上述 2 个 pytest（仿现有块，`PYTHON_EXECUTABLE /usr/bin/python3`） |
+| `src/planner/plan_manage/CMakeLists.txt` | **修改**：注册上述 2 个 pytest（先 grep 确认 `ament_add_pytest_test` 模式；`launch/` 目录整目录安装已自动带上 topic_resolver.py） |
 
 ---
 
 ## Task 0: Odin 接口验证（前置，改代码前）
 
-**Files:** 无改动。在 T1 启动 Odin 后执行，记录输出；不通过则**暂停开发**，先解决帧/QoS 问题。
+**Files:** 无改动。在 T1 启动 Odin 后执行，记录输出；不通过则**暂停开发**。
 
-- [ ] **Step 1: 启动 Odin 并核对话题**
+- [ ] **Step 1: 启动 Odin**
 
 ```bash
 cd /home/yu/3DNav/SLAM && ./2run_slam.sh
 ```
 
-新终端：
+- [ ] **Step 2: 话题频率与类型**
 
 ```bash
 ros2 topic hz /registered_scan
 ros2 topic hz /state_estimation
+ros2 topic type /registered_scan      # Expected: sensor_msgs/msg/PointCloud2
+ros2 topic type /state_estimation     # Expected: nav_msgs/msg/Odometry
 ```
 
-Expected：两个话题均有稳定非零频率。
+Expected：两话题有稳定非零频率，类型正确。
 
-- [ ] **Step 2: 帧一致性检查（关键前提）**
+- [ ] **Step 3: 帧一致性（关键前提）**
 
 ```bash
 ros2 topic echo /registered_scan --once
 ros2 topic echo /state_estimation --once
 ```
 
-Expected：`/registered_scan.header.frame_id == /state_estimation.header.frame_id`（应为 `odom` 或 Odin 实际帧名），即 `/registered_scan` 已在 odom/world 帧。
-**不满足时**：禁止使用 `cloud_is_world=true`。需 TF 转换节点或点云转换适配器（当前不实现，先停止并汇报）。
+Expected：`/registered_scan.header.frame_id == /state_estimation.header.frame_id`（应为 `odom` 或 Odin 实际帧名），即点云已在 odom/world 帧。
+**不满足时**：禁止 `cloud_is_world=true`，需 TF/点云转换节点（当前不实现，先停止并汇报）。
 
-- [ ] **Step 3: QoS 记录（不要假设兼容）**
+- [ ] **Step 4: QoS 记录（不要假设兼容）**
 
 ```bash
 ros2 topic info /registered_scan -v
 ros2 topic info /state_estimation -v
 ```
 
-Expected：记录两端 publisher QoS（reliability/history/depth）。后续若 planner 收不到数据，按 spec §6 在订阅侧对齐。
+Expected：记录两端 publisher QoS（reliability/history/depth）。后续 planner 收不到数据时按此对齐订阅侧。
 
-- [ ] **Step 4: 记录并提交（只记录，不改代码）**
+- [ ] **Step 5: 记录结果并提交（只记录，不改代码）**
 
-把 Task 0 结果写进本计划文件末尾的「Task 0 验证记录」小节后提交：
+把结果追加到本文件末尾「Task 0 验证记录」后：
 
 ```bash
 git add docs/superpowers/plans/2026-09-01-odin-slam-pct-scan-interface.md
-git commit -m "docs: 记录 Odin 接口前置验证结果（帧/QoS）"
+git commit -m "docs: 记录 Odin 接口前置验证结果（类型/帧/QoS）"
 ```
 
 ---
 
-## Task 1: `_compute_topics()` + `_should_publish_robot_state()` 纯函数 + 单测
+## Task 1: `launch/topic_resolver.py` 纯函数模块 + 单测
 
 **Files:**
-- Create: `src/planner/plan_manage/test/test_run_launch_topics.py`
-- Modify: `src/planner/plan_manage/launch/run.launch.py`（新增模块级函数，不改 `_setup`）
+- Create: `src/planner/plan_manage/launch/topic_resolver.py`
+- Create: `src/planner/plan_manage/test/test_topic_resolver.py`
 
 **Interfaces:**
-- Produces: `_compute_topics(*, is_real, sensor_type, enable_local_sensing, body_pose_topic="", sensor_pose_topic="", cloud_topic="")` → dict（键 `body_pose, sensor_pose, cloud, depth, cloud_is_world, need_extrinsic, intrinsics`），real+depth 抛 `ValueError`。`_should_publish_robot_state(is_real, publish_robot_state)` → bool。Task 2 消费二者。
+- Produces: `_compute_topics(*, is_real, sensor_type, enable_local_sensing, body_pose_topic="", sensor_pose_topic="", cloud_topic="")` → dict（5 键：`body_pose, sensor_pose, cloud, cloud_is_world, need_extrinsic`）；real+depth 抛 `ValueError`。`_should_publish_robot_state(is_real, publish_robot_state)` → bool。Task 2 通过 `from topic_resolver import _compute_topics, _should_publish_robot_state` 消费。
 
 - [ ] **Step 1: 写失败测试**
 
-创建 `src/planner/plan_manage/test/test_run_launch_topics.py`：
+创建 `src/planner/plan_manage/test/test_topic_resolver.py`（纯 Python，无 ROS import）：
 
 ```python
-"""Light unit tests for pure topic/frame-resolution logic in run.launch.py."""
+"""Unit tests for launch/topic_resolver.py (pure functions, no ROS)."""
 
 import importlib.util
 import os
 
 import pytest
 
-RUN_LAUNCH = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "launch", "run.launch.py")
+RESOLVER = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "launch", "topic_resolver.py")
 )
-SPEC = importlib.util.spec_from_file_location("run_launch", RUN_LAUNCH)
+SPEC = importlib.util.spec_from_file_location("topic_resolver", RESOLVER)
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-def _topics(**kwargs):
-    return MODULE._compute_topics(**kwargs)
-
-
-# --- _compute_topics: 真实分支 ---
-
 def test_real_branch_uses_odin_topics():
-    t = _topics(is_real=True, sensor_type="lidar", enable_local_sensing=True)
-    assert t["body_pose"] == "/state_estimation"
-    assert t["sensor_pose"] == "/state_estimation"
-    assert t["cloud"] == "/registered_scan"
-    assert t["cloud_is_world"] is True
-    assert t["need_extrinsic"] is False
-
-
-def test_real_branch_respects_topic_overrides():
-    t = _topics(
-        is_real=True, sensor_type="lidar", enable_local_sensing=True,
-        body_pose_topic="/my/odom", cloud_topic="/my/cloud",
-    )
-    assert t["body_pose"] == "/my/odom"
-    assert t["sensor_pose"] == "/state_estimation"  # 未覆盖项保持默认
-    assert t["cloud"] == "/my/cloud"
+    t = MODULE._compute_topics(is_real=True, sensor_type="lidar", enable_local_sensing=True)
+    assert t == {
+        "body_pose": "/state_estimation",
+        "sensor_pose": "/state_estimation",
+        "cloud": "/registered_scan",
+        "cloud_is_world": True,
+        "need_extrinsic": False,
+    }
 
 
 def test_real_branch_rejects_depth():
     with pytest.raises(ValueError):
-        _topics(is_real=True, sensor_type="depth", enable_local_sensing=True)
+        MODULE._compute_topics(is_real=True, sensor_type="depth", enable_local_sensing=True)
 
-
-# --- _compute_topics: 仿真分支（保护共享代码路径不被重构破坏） ---
-
-def test_sim_branch_lidar_uses_quad_topics():
-    t = _topics(is_real=False, sensor_type="lidar", enable_local_sensing=True)
-    assert t["body_pose"] == "/quad_0/body_pose"
-    assert t["sensor_pose"] == "/quad_0/lidar_pose"
-    assert t["cloud"] == "/quad_0/cloud"
-    assert t["cloud_is_world"] is True
-    assert t["need_extrinsic"] is False
-
-
-def test_sim_branch_depth_uses_camera_pose():
-    t = _topics(is_real=False, sensor_type="depth", enable_local_sensing=True)
-    assert t["sensor_pose"] == "/quad_0/camera_pose"
-
-
-def test_sim_branch_without_local_sensing_uses_body_pose():
-    t = _topics(is_real=False, sensor_type="lidar", enable_local_sensing=False)
-    assert t["sensor_pose"] == "/quad_0/body_pose"
-
-
-# --- _should_publish_robot_state ---
 
 @pytest.mark.parametrize(
     "is_real,publish_robot_state,expected",
     [
-        (True, "", False),    # 真实默认关（真机狗自有 TF）
-        (False, "", True),    # 仿真默认开
+        (True, "", False),     # 真实默认关（真机狗自有 TF）
+        (False, "", True),     # 仿真默认开
         (True, "true", True),  # 显式覆盖开
         (False, "false", False),
     ],
@@ -190,14 +172,21 @@ def test_should_publish_robot_state(is_real, publish_robot_state, expected):
 
 - [ ] **Step 2: 运行测试确认失败**
 
-Run: `source /opt/ros/humble/setup.bash && python3 -m pytest src/planner/plan_manage/test/test_run_launch_topics.py -v`
-Expected: FAIL —— `AttributeError: module 'run_launch' has no attribute '_compute_topics'`
+Run: `source /opt/ros/humble/setup.bash && python3 -m pytest src/planner/plan_manage/test/test_topic_resolver.py -v`
+Expected: FAIL —— `FileNotFoundError` / `ImportError: No module named 'topic_resolver'`（模块尚不存在）
 
-- [ ] **Step 3: 实现两个纯函数**
+- [ ] **Step 3: 实现 topic_resolver.py**
 
-在 `run.launch.py` 中、`_setup` 之前（紧接 `_as_bool` 之后）添加：
+创建 `src/planner/plan_manage/launch/topic_resolver.py`：
 
 ```python
+"""Pure topic/frame-resolution helpers for run.launch.py.
+
+This module deliberately has NO ROS imports so it can be unit-tested
+independently of the launch environment.
+"""
+
+
 def _compute_topics(
     *,
     is_real,
@@ -212,6 +201,9 @@ def _compute_topics(
     Real branch uses Odin topics directly (cloud_is_world=true, no extrinsic):
     /registered_scan and /state_estimation both live in the odom frame, which
     Phase A treats as the planner's world frame (see Task 0 frame check).
+
+    Returns dict with keys: body_pose, sensor_pose, cloud, cloud_is_world,
+    need_extrinsic. depth/intrinsics are deferred to Phase B.
     """
     if is_real:
         if sensor_type != "lidar":
@@ -223,10 +215,8 @@ def _compute_topics(
             "body_pose": body_pose_topic or "/state_estimation",
             "sensor_pose": sensor_pose_topic or "/state_estimation",
             "cloud": cloud_topic or "/registered_scan",
-            "depth": "/camera/aligned_depth_to_color/image_raw",
             "cloud_is_world": True,
             "need_extrinsic": False,
-            "intrinsics": {},
         }
     sensor_pose = sensor_pose_topic or (
         "/quad_0/camera_pose" if sensor_type == "depth" else "/quad_0/lidar_pose"
@@ -237,10 +227,8 @@ def _compute_topics(
         "body_pose": "/quad_0/body_pose",
         "sensor_pose": sensor_pose,
         "cloud": cloud_topic or "/quad_0/cloud",
-        "depth": "/quad_0/depth",
         "cloud_is_world": True,
         "need_extrinsic": False,
-        "intrinsics": {},
     }
 
 
@@ -248,45 +236,60 @@ def _should_publish_robot_state(is_real, publish_robot_state):
     """Real branch defaults to off (the real dog publishes its own TF)."""
     if publish_robot_state == "":
         return not is_real
-    return _as_bool(publish_robot_state)
+    return publish_robot_state.strip().lower() in ("1", "true", "yes", "on")
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
 
-Run: `source /opt/ros/humble/setup.bash && python3 -m pytest src/planner/plan_manage/test/test_run_launch_topics.py -v`
-Expected: PASS（7 个测试全绿）
+Run: `source /opt/ros/humble/setup.bash && python3 -m pytest src/planner/plan_manage/test/test_topic_resolver.py -v`
+Expected: PASS（3 个测试全绿，parametrize 展开 4 个用例）
 
 - [ ] **Step 5: 提交**
 
 ```bash
-git add src/planner/plan_manage/launch/run.launch.py src/planner/plan_manage/test/test_run_launch_topics.py
-git commit -m "feat: 提取 _compute_topics/_should_publish_robot_state 纯函数并单测（Odin 话题映射，real 仅 lidar）"
+git add src/planner/plan_manage/launch/topic_resolver.py src/planner/plan_manage/test/test_topic_resolver.py
+git commit -m "feat: 新增 launch/topic_resolver.py 纯函数模块（Odin 话题映射，real 仅 lidar）"
 ```
 
 ---
 
-## Task 2: 接线 `_setup` + 新增 launch 参数 + 条件化 robot_state_publisher
+## Task 2: `run.launch.py` 接线
 
 **Files:**
 - Modify: `src/planner/plan_manage/launch/run.launch.py`
 
 **Interfaces:**
-- Consumes: `_compute_topics`、`_should_publish_robot_state`（Task 1 签名）。
-- Produces: 新 launch 参数 `body_pose_topic`、`sensor_pose_topic`、`cloud_topic`、`world_frame`、`publish_robot_state`。`cmd_vel` **不**参数化，固定 `/cmd_vel`（真实）/`/quad_0/cmd_vel`（仿真）。
+- Consumes: `topic_resolver` 的 `_compute_topics` / `_should_publish_robot_state`（Task 1）。
+- Produces: 新 launch 参数 `body_pose_topic`、`sensor_pose_topic`、`cloud_topic`、`world_frame`、`publish_robot_state`。速度接口统一 `/cmd_vel`（**无** `cmd_vel_topic`）。
 
-- [ ] **Step 1: 接线 `_setup`**
+- [ ] **Step 1: 导入 resolver**
 
-**1a. 在 `_setup` 开头（`enable_local_sensing` 之后）读取新参数：**
+在 `run.launch.py` 文件头部（现有 import 块之后）添加：
+
+```python
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from topic_resolver import _compute_topics, _should_publish_robot_state
+```
+
+（`launch/` 目录随 `install(DIRECTORY launch ...)` 整目录安装，symlink-install 下源码/安装侧均能找到 `topic_resolver.py`。）
+
+- [ ] **Step 2: 读取新参数**
+
+在 `_setup` 开头（`enable_local_sensing` 之后）添加：
 
 ```python
     body_pose_topic = LaunchConfiguration("body_pose_topic").perform(context)
     sensor_pose_topic = LaunchConfiguration("sensor_pose_topic").perform(context)
     cloud_topic = LaunchConfiguration("cloud_topic").perform(context)
     publish_robot_state = LaunchConfiguration("publish_robot_state").perform(context)
-    # world_frame（默认 odom）仅声明，阶段 A 不使用 TF；保留供阶段 B 帧对齐。
+    # world_frame（默认 odom）仅声明，阶段 A 不做 TF lookup；保留供阶段 B 帧对齐。
 ```
 
-**1b. 用 `_compute_topics` 替换 `if is_real: ... else: ...` 整块（含 intrinsics），改为：**
+- [ ] **Step 3: 用 `_compute_topics` 替换 `if is_real: ... else: ...` 整块**
+
+原块（含 depth intrinsics 赋值）替换为：
 
 ```python
     topics = _compute_topics(
@@ -300,22 +303,39 @@ git commit -m "feat: 提取 _compute_topics/_should_publish_robot_state 纯函�
     body_pose = topics["body_pose"]
     sensor_pose = topics["sensor_pose"]
     cloud = topics["cloud"]
-    depth = topics["depth"]
     cloud_is_world = topics["cloud_is_world"]
     need_extrinsic = topics["need_extrinsic"]
-    intrinsics = topics["intrinsics"]
+    depth = "/quad_0/depth" if not is_real else "/camera/aligned_depth_to_color/image_raw"
+    intrinsics = {}
 ```
 
-**1c. `cmd_vel` 保持固定（不引入 `cmd_vel_topic`）** —— `closed_loop_controller` 的 remap 维持现状：
+（depth 一行保留仅为 `scan_planner_node` 的 depth remap 提供值；真实分支用 lidar，depth 不被消费。）
+
+- [ ] **Step 4: `cmd_vel` 统一为 `/cmd_vel`（接口冻结）**
+
+`closed_loop_controller` 的 remap：
 
 ```python
             remappings=[
                 ("body_pose", body_pose),
-                ("cmd_vel", "/cmd_vel" if is_real else "/quad_0/cmd_vel"),
+                ("cmd_vel", "/cmd_vel"),
             ],
 ```
 
-**1d. `go2_robot_state_publisher` 条件化** —— 当前无条件 append，改为：
+仿真分支 `go2_kinematic_sim` 的 remap 同步改为消费统一话题：
+
+```python
+                    remappings=[
+                        ("body_pose", "/quad_0/body_pose"),
+                        ("cmd_vel", "/cmd_vel"),
+                    ],
+```
+
+（不再区分 `"/cmd_vel" if is_real else "/quad_0/cmd_vel"`。）
+
+- [ ] **Step 5: `go2_robot_state_publisher` 条件化**
+
+当前无条件 append 的 `robot_state_publisher` 节点改为：
 
 ```python
     if _should_publish_robot_state(is_real, publish_robot_state):
@@ -338,7 +358,7 @@ git commit -m "feat: 提取 _compute_topics/_should_publish_robot_state 纯函�
         )
 ```
 
-- [ ] **Step 2: 新增 launch 参数声明**
+- [ ] **Step 6: 新增 launch 参数声明**
 
 在 `generate_launch_description()` 的 `DeclareLaunchArgument` 列表中追加：
 
@@ -350,9 +370,9 @@ git commit -m "feat: 提取 _compute_topics/_should_publish_robot_state 纯函�
             DeclareLaunchArgument("publish_robot_state", default_value=""),
 ```
 
-（**不加** `cmd_vel_topic` —— 见 Global Constraints 接口冻结表。）
+（**不加** `cmd_vel_topic`。）
 
-- [ ] **Step 3: 人工核对参数真实来源（替代 yaml 守卫）**
+- [ ] **Step 7: 人工核对参数真实来源**
 
 ```bash
 cd /home/yu/3DNav/pct_scan_ros2/src/PCT-SCAN-ROS2
@@ -360,25 +380,24 @@ grep -R "cloud_is_world" src/
 grep -R "need_extrinsic" src/
 ```
 
-Expected：`grid_map.cloud_is_world` / `grid_map.need_extrinsic` 的唯一真实来源为
-`run.launch.py` 中 `planner_overrides`（取自 `_compute_topics`）与 `config/planner.yaml`
-默认值（`cloud_is_world: true`、`need_extrinsic: false`、`sensor_type: lidar`，已确认）。
-确认无其它地方以 `false/true` 覆盖真实分支。
+Expected：`grid_map.cloud_is_world` / `grid_map.need_extrinsic` 唯一真实来源为
+`run.launch.py` 的 `planner_overrides`（取自 `_compute_topics`）与 `config/planner.yaml`
+默认值（`cloud_is_world: true`、`need_extrinsic: false`、`sensor_type: lidar`，已确认）。无其它覆盖。
 
-- [ ] **Step 4: 回归验证**
+- [ ] **Step 8: 回归验证**
 
 ```bash
-source /opt/ros/humble/setup.bash && source install/setup.bash
-python3 -m pytest src/planner/plan_manage/test/test_run_launch_topics.py -v
+source /opt/ros/humble/setup.bash
+python3 -m pytest src/planner/plan_manage/test/test_topic_resolver.py -v
 ```
 
-Expected：Task 1 的 7 个纯函数测试仍全绿（真实链路逻辑已由 Task 1 覆盖，本任务只做接线）。
+Expected：Task 1 的测试仍全绿（真实链路逻辑已由纯函数测试覆盖，本任务只接线）。
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 9: 提交**
 
 ```bash
 git add src/planner/plan_manage/launch/run.launch.py
-git commit -m "feat: run.launch.py 接线 Odin 真实话题（新增 5 参数，robot_state_publisher 条件化，cmd_vel 固定）"
+git commit -m "feat: run.launch.py 接线 Odin 话题（新增 5 参数，rsp 条件化，cmd_vel 统一 /cmd_vel）"
 ```
 
 ---
@@ -472,19 +491,28 @@ git commit -m "feat: 新增 launch_pct_scan_real.sh 真实启动脚本（Odin �
 
 ---
 
-## Task 4: 注册 pytest 到 CMakeLists + colcon 回归
+## Task 4: 注册 pytest + colcon 回归
 
 **Files:**
 - Modify: `src/planner/plan_manage/CMakeLists.txt`（`endif()` 前的 pytest 块内）
 
-- [ ] **Step 1: 注册新测试**
+- [ ] **Step 1: 先确认测试基建已存在**
 
-在 `plan_manage/CMakeLists.txt` 现有 `ament_add_pytest_test(test_reference_path_publisher_unit ...)` 块之后、`add_launch_test(...)` 之前，追加：
+```bash
+cd /home/yu/3DNav/pct_scan_ros2/src/PCT-SCAN-ROS2
+grep -n "ament_cmake_pytest" src/planner/plan_manage/CMakeLists.txt
+```
+
+Expected：命中 `find_package(ament_cmake_pytest REQUIRED)` 与现有 `ament_add_pytest_test(...)` 块（已存在，仿照注册）。若缺失则需先加 `find_package(ament_cmake_pytest REQUIRED)`。
+
+- [ ] **Step 2: 注册新测试**
+
+在现有 `ament_add_pytest_test(test_reference_path_publisher_unit ...)` 块之后、`add_launch_test(...)` 之前追加：
 
 ```cmake
   ament_add_pytest_test(
-    test_run_launch_topics
-    test/test_run_launch_topics.py
+    test_topic_resolver
+    test/test_topic_resolver.py
     PYTHON_EXECUTABLE /usr/bin/python3
     ENV PYTEST_DISABLE_PLUGIN_AUTOLOAD=1)
   ament_add_pytest_test(
@@ -494,12 +522,11 @@ git commit -m "feat: 新增 launch_pct_scan_real.sh 真实启动脚本（Odin �
     ENV PYTEST_DISABLE_PLUGIN_AUTOLOAD=1)
 ```
 
-（沿用现有块的 `PYTHON_EXECUTABLE /usr/bin/python3`，避开 conda python。）
+（沿用现有块的 `PYTHON_EXECUTABLE /usr/bin/python3`，避开 conda python。`launch/` 目录已整目录安装，无需额外 install topic_resolver.py。）
 
-- [ ] **Step 2: 重建并跑全套测试**
+- [ ] **Step 3: 重建并跑全套测试**
 
 ```bash
-cd /home/yu/3DNav/pct_scan_ros2/src/PCT-SCAN-ROS2
 source /opt/ros/humble/setup.bash
 colcon build --packages-select scan_planner --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release
 source install/setup.bash
@@ -509,11 +536,11 @@ colcon test-result --verbose
 
 Expected：原有测试（含 `test_planner_startup` 启动冒烟）+ 新增 2 个 pytest 全部 PASS/无失败。若新增项 FAIL，用 `--verbose` 看断言并修复。
 
-- [ ] **Step 3: 提交**
+- [ ] **Step 4: 提交**
 
 ```bash
 git add src/planner/plan_manage/CMakeLists.txt
-git commit -m "test: 注册 run.launch 纯函数 / real 脚本契约 pytest 到 colcon"
+git commit -m "test: 注册 topic_resolver / real 脚本契约 pytest 到 colcon"
 ```
 
 ---
@@ -522,30 +549,43 @@ git commit -m "test: 注册 run.launch 纯函数 / real 脚本契约 pytest 到 
 
 **Files:** 无代码改动。按序执行，记录每步输出。
 
-- [ ] **Step 1: 启动 Odin 并确认话题**
+- [ ] **Step 1: Odin 启动**
 
 ```bash
 cd /home/yu/3DNav/SLAM && ./2run_slam.sh
 ```
 
-新终端：`ros2 topic hz /registered_scan`、`ros2 topic hz /state_estimation`。
-Expected：两话题有稳定频率；若之前 Task 0 未做，补做帧一致性与 QoS 检查。
+确认 `/registered_scan`、`/state_estimation` 有稳定频率（若 Task 0 未做，补做类型/帧/QoS 检查）。
 
-- [ ] **Step 2: 启动 planner 真机分支，确认 GridMap 更新**
+- [ ] **Step 2: planner 启动 + 节点检查 + GridMap 更新**
 
 ```bash
 cd /home/yu/3DNav/pct_scan_ros2/src/PCT-SCAN-ROS2
 ./scripts/launch_pct_scan_real.sh
 ```
 
+另开终端：
+
+```bash
+ros2 node list          # Expected: 含 scan_planner_node、closed_loop_controller
+```
+
 另开终端看 RViz：`ros2 launch scan_planner rviz.launch.py`
 Expected：planner 启动无报错；RViz 局部占据地图随 `/registered_scan` 实时更新，`/state_estimation` 位姿变化时滑动窗口跟随。
 
-- [ ] **Step 3: RViz 2D Nav Goal，确认 planning/bspline**
+- [ ] **Step 3: RViz 2D Nav Goal**
 
-Expected：设置目标点后 `ros2 topic hz /planning/bspline` 有输出，轨迹平滑无跳变。
+设置目标点后，确认 `planning/bspline` 输出。
 
-- [ ] **Step 4: 确认 /cmd_vel 输出（未接狗）**
+- [ ] **Step 4: planning/bspline 输出**
+
+```bash
+ros2 topic hz /planning/bspline
+```
+
+Expected：目标点设置后有稳定输出，轨迹平滑无跳变。
+
+- [ ] **Step 5: /cmd_vel 输出（未接狗）**
 
 ```bash
 ros2 topic echo /cmd_vel
@@ -553,12 +593,11 @@ ros2 topic echo /cmd_vel
 
 Expected：`geometry_msgs/msg/Twist`，目标点设置后非零、随收敛归零。**先确认规划器输出正常，再接狗。**
 
-- [ ] **Step 5: 接入 Go2 控制链**
+- [ ] **Step 6: 接入 Go2**
 
-确认 Step 2–4 全链路正常后，把 `/cmd_vel` 接入 Go2（ZBNav 已验证接口）。空旷场地点动，再逐步验证避障。
-规划器问题与控制问题分开排查。
+确认 Step 2–5 全链路正常后，把 `/cmd_vel` 接入 Go2（ZBNav 已验证接口）。空旷场地点动，再逐步验证避障（Test 0 空旷点到点 / Test 1 静态障碍绕行 / Test 2 近距离障碍）。
 
-- [ ] **Step 6: 收尾**
+- [ ] **Step 7: 收尾**
 
 验收通过后，更新 `CLAUDE.md`（真机接口、SLAM 工作空间说明），单独提交。阶段 B（PCT 全局 tomogram）另行流程，不在本计划内。
 
@@ -571,24 +610,24 @@ Expected：`geometry_msgs/msg/Twist`，目标点设置后非零、随收敛归�
 | Spec 要求 | 对应任务 |
 | --- | --- |
 | §4.1 接口映射 / odom 帧约定 | Task 1（`_compute_topics`）+ Task 2（接线） |
-| §4.2 launch 参数（5 个话题类 + publish_robot_state；无 cmd_vel_topic） | Task 2 Step 1/2 |
-| §4.2 真实分支不启动 robot_state_publisher | Task 2 Step 1d（`_should_publish_robot_state`） |
+| §4.2 launch 参数（5 个话题类 + publish_robot_state；无 cmd_vel_topic） | Task 2 Step 2/6 |
+| §4.2 真实分支不启动 robot_state_publisher | Task 2 Step 5（`_should_publish_robot_state`） |
 | §4.3 `launch_pct_scan_real.sh` | Task 3 |
 | §4.4 起点/速度沿用默认 | Task 5 实测 |
-| §4.5 sensor_pose 外参假设 | Task 1 函数注释 + 测试 |
-| §4.6 need_extrinsic 代码核对 | Task 2 Step 3（grep 真实来源） |
-| §5 启动前接口验证（帧一致） | **Task 0**（前置，改代码前） |
-| §6 QoS 兼容性 | Task 0 Step 3 |
-| §8.2 cmd_vel 两阶段验证 | Task 5 Step 4/5 |
-| §8.3 Test 0/1/2 | Task 5（空旷→避障→近障碍，依实机条件展开） |
-| 接口冻结 `/cmd_vel` | Global Constraints + Task 2 Step 1c（不参数化） |
+| §4.5 sensor_pose 外参假设 | Task 1 函数注释 |
+| §4.6 need_extrinsic 代码核对 | Task 2 Step 7（grep 真实来源） |
+| §5 启动前接口验证（帧一致） | **Task 0**（前置） |
+| §6 QoS 兼容性 | Task 0 Step 4 |
+| §8.2 cmd_vel 两阶段验证 | Task 5 Step 5/6 |
+| §8.3 Test 0/1/2 | Task 5 Step 6 |
+| 接口冻结 `/cmd_vel`（ZBNav 收敛） | Global Constraints + Task 2 Step 4 |
 
-**删除项（依 ZBNav 收敛）**：launch 结构测试（`_setup` 直调 / LaunchContext / Node 集合）、`cmd_vel_topic` 参数、planner.yaml pytest 守卫（改人工 grep 核对）、launch 执行测试。
+**删除项（依 ZBNav 收敛）**：launch/_setup/LaunchContext/Node 测试、`cmd_vel_topic` 参数、planner.yaml pytest 守卫（改人工 grep）、sim 话题细节测试、depth/intrinsics 返回值。
 
 **占位符扫描：** 无 TBD/TODO；每个代码步骤含完整代码；Task 0/5 为手动验收，含具体命令与预期输出。
 
-**类型一致性：** `_compute_topics`（Task 1 定义、Task 2 消费）签名与返回键一致；`_should_publish_robot_state` 在 Task 1 定义、Task 2 Step 1d 消费；node 名 `go2_robot_state_publisher` 与 `run.launch.py` 的 `name=` 一致。
+**类型一致性：** `_compute_topics` 返回 5 键在 Task 1 测试与 Task 2 Step 3 逐键一致；`_should_publish_robot_state` 在 Task 1 定义、Task 2 Step 5 消费；node 名 `go2_robot_state_publisher` 与 `run.launch.py` 的 `name=` 一致；`topic_resolver.py` 无 ROS import，测试可独立运行。
 
 **Task 0 验证记录**
 
-（Task 0 完成后在此追加：frame_id、QoS、hz 实测结果。）
+（Task 0 完成后在此追加：topic type、frame_id、QoS、hz 实测结果。）
