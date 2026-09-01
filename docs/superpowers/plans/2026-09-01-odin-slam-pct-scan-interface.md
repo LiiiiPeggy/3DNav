@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 `pct_scan_ros2/src/PCT-SCAN-ROS2` 从原有 LIO 接口适配到 Odin SLAM：输入 `/registered_scan` + `/state_estimation`，输出 `/cmd_vel`，实现 Go2 真机部署前的 map-free local navigation（无全局地图局部导航）。
+**Goal:** 把 `pct_scan_ros2/src/PCT-SCAN-ROS2` 从原有 LIO 接口适配到 Odin SLAM：输入 `/registered_scan` + `/state_estimation`，输出 `/cmd_vel`，完成实际四足机器人平台部署前的 map-free local navigation（无全局地图局部导航）接口闭环验证。
 
-**Architecture:** 纯函数独立到无 ROS 依赖的 `launch/topic_resolver.py`（`_compute_topics` + `_should_publish_robot_state`）；`run.launch.py` 只声明参数、调用 resolver、创建 Node；真实分支 Odin 默认话题；`go2_robot_state_publisher` 条件化；速度接口统一冻结为 `/cmd_vel`。SCAN 核心算法、GridMap、轨迹优化、控制器零修改。
+**Architecture:** 纯函数独立到无 ROS 依赖的 `launch/topic_resolver.py`（`_compute_topics` + `_should_publish_robot_state`）；`run.launch.py` 只声明参数、调用 resolver、创建 Node；真实分支 Odin 默认话题；`robot_state_publisher` 条件化；速度接口统一冻结为 ROS 标准 `/cmd_vel`。SCAN 核心算法、GridMap、轨迹优化、控制器零修改。
 
 **Tech Stack:** ROS 2 Humble / launch（Python）、pytest（`ament_add_pytest_test`）、bash。
 
-**Spec:** [docs/superpowers/specs/2026-09-01-odin-slam-pct-scan-interface-design.md](../../specs/2026-09-01-odin-slam-pct-scan-interface-design.md)（执行者需同时阅读；本计划按 ZBNav 实机经验收敛，接口冻结 `/cmd_vel` 覆盖 spec §9 中 `cmd_vel_topic` 的早期提法）
+**Spec:** [docs/superpowers/specs/2026-09-01-odin-slam-pct-scan-interface-design.md](../../specs/2026-09-01-odin-slam-pct-scan-interface-design.md)（执行者需同时阅读；本计划按已有实机导航系统经验收敛，接口冻结 `/cmd_vel` 覆盖 spec §9 中 `cmd_vel_topic` 的早期提法）
 
 **重点原则：接口迁移优先，算法零修改；真实链路优先，避免过度工程化。不引入额外抽象层。**
 
@@ -23,28 +23,28 @@ Odin SLAM
           ↓
         /cmd_vel (geometry_msgs/msg/Twist)
           ↓
-          Go2
+    Robot control interface（具体机器人控制层不属于阶段 A）
 ```
 
 ## Global Constraints
 
 - 真实分支话题映射：`body_pose ← /state_estimation`、`sensor_pose ← /state_estimation`、`cloud ← /registered_scan`。
 - 真实分支 `grid_map.cloud_is_world=true`、`grid_map.need_extrinsic=false` —— **前提**：`/registered_scan` 已在 odom/world 帧（Task 0 验证）。帧不一致则禁止 `cloud_is_world=true`，需 TF/点云转换节点（**当前不实现**）。
-- **接口冻结**（Go2 + ZBNav 已验证链路，统一不区分真实/仿真）：
+- **接口冻结**：参考已经成功实机部署的导航系统经验，采用 ROS 标准速度接口 `geometry_msgs/msg/Twist`、topic `/cmd_vel`，**与具体机器人型号无关**。统一不区分真实/仿真：
 
   | Interface | Topic | Message |
   |---|---|---|
   | Velocity command | `/cmd_vel` | `geometry_msgs/msg/Twist` |
 
 - **阶段 A 真实分支仅支持 `sensor_type=lidar`**；`is_real_world=true` 搭配 `sensor_type=depth` 必须抛 `ValueError`。
-- 真实分支**不启动** `go2_robot_state_publisher`（真机狗自有 TF/URDF）；仿真默认启动。
-- `odom` = planner 世界帧；阶段 A 不做 TF lookup / 坐标转换；`world_frame` 仅预留。
+- **`robot_state_publisher` 条件化**：真实分支**不启动**（阶段 A 只验证 Odin SLAM → planner → `/cmd_vel`，不需要 URDF / robot_description / 机器人模型 / TF 模型可视化）；仿真分支保持原有逻辑。
+- `odom` = planner 世界帧；`world_frame` 仅预留，阶段 A 不执行 TF lookup、URDF 加载、机器人模型变换。
 - `_compute_topics` 返回**仅 5 个键**：`body_pose, sensor_pose, cloud, cloud_is_world, need_extrinsic`（depth/intrinsics 留给阶段 B）。
 - `topic_resolver.py` **无 ROS import、无 LaunchContext、无 Node 创建**，可独立 pytest。
 - **不修改**：`scan_replan_fsm`/`planner_manager`、`plan_env`、`path_searching`、`bspline_opt`、`closed_loop_controller`。
 - 不假设 Odin QoS 兼容（spec §6），Task 0 实测记录。
 - 测试用 `PYTHON_EXECUTABLE /usr/bin/python3`（避开 conda python）。
-- 只测轻量纯函数与文件契约，**不测 launch 执行 / _setup / Node 结构**。
+- 只测轻量纯函数与文件契约，**不测 launch 执行 / _setup / Node 结构**；不加 URDF、robot_description、RViz 模型、TF 机器人模型测试。
 
 ---
 
@@ -53,7 +53,7 @@ Odin SLAM
 | 文件 | 责任 |
 | --- | --- |
 | `src/planner/plan_manage/launch/topic_resolver.py` | **新建**：纯函数 `_compute_topics` + `_should_publish_robot_state`（无 ROS import） |
-| `src/planner/plan_manage/launch/run.launch.py` | **修改**：`sys.path` 导入 resolver；新增 5 个 launch 参数（`body_pose_topic`/`sensor_pose_topic`/`cloud_topic`/`world_frame`/`publish_robot_state`）；真实分支 Odin 默认话题；rsp 条件化；`cmd_vel` 统一 `/cmd_vel` |
+| `src/planner/plan_manage/launch/run.launch.py` | **修改**：`sys.path` 导入 resolver；新增 5 个 launch 参数（`body_pose_topic`/`sensor_pose_topic`/`cloud_topic`/`world_frame`/`publish_robot_state`）；真实分支 Odin 默认话题；`robot_state_publisher` 条件化；`cmd_vel` 统一 `/cmd_vel` |
 | `src/planner/plan_manage/test/test_topic_resolver.py` | **新建**：纯函数单测（real lidar / real depth 报错 / should_publish） |
 | `scripts/launch_pct_scan_real.sh` | **新建**：真实启动脚本（复用 `_pct_scan_env.sh`，透传 `"$@"`） |
 | `src/planner/plan_manage/test/test_launch_pct_scan_real.py` | **新建**：文件契约测试（存在/可执行/关键参数，不执行 launch） |
@@ -160,7 +160,7 @@ def test_real_branch_rejects_depth():
 @pytest.mark.parametrize(
     "is_real,publish_robot_state,expected",
     [
-        (True, "", False),     # 真实默认关（真机狗自有 TF）
+        (True, "", False),     # 真实默认关（阶段 A 不需要机器人模型显示）
         (False, "", True),     # 仿真默认开
         (True, "true", True),  # 显式覆盖开
         (False, "false", False),
@@ -233,7 +233,7 @@ def _compute_topics(
 
 
 def _should_publish_robot_state(is_real, publish_robot_state):
-    """Real branch defaults to off (the real dog publishes its own TF)."""
+    """Real branch defaults to off (Phase A needs no robot model/URDF)."""
     if publish_robot_state == "":
         return not is_real
     return publish_robot_state.strip().lower() in ("1", "true", "yes", "on")
@@ -284,7 +284,7 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
     sensor_pose_topic = LaunchConfiguration("sensor_pose_topic").perform(context)
     cloud_topic = LaunchConfiguration("cloud_topic").perform(context)
     publish_robot_state = LaunchConfiguration("publish_robot_state").perform(context)
-    # world_frame（默认 odom）仅声明，阶段 A 不做 TF lookup；保留供阶段 B 帧对齐。
+    # world_frame（默认 odom）仅声明，阶段 A 不做 TF lookup / URDF 加载；保留供阶段 B 帧对齐。
 ```
 
 - [ ] **Step 3: 用 `_compute_topics` 替换 `if is_real: ... else: ...` 整块**
@@ -322,7 +322,7 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
             ],
 ```
 
-仿真分支 `go2_kinematic_sim` 的 remap 同步改为消费统一话题：
+仿真分支的速度执行节点（现有仿真节点，保持原逻辑）的 remap 同步改为消费统一话题：
 
 ```python
                     remappings=[
@@ -333,9 +333,9 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
 
 （不再区分 `"/cmd_vel" if is_real else "/quad_0/cmd_vel"`。）
 
-- [ ] **Step 5: `go2_robot_state_publisher` 条件化**
+- [ ] **Step 5: `robot_state_publisher` 条件化**
 
-当前无条件 append 的 `robot_state_publisher` 节点改为：
+当前无条件 append 的 `robot_state_publisher` 节点改为（节点名通用化）：
 
 ```python
     if _should_publish_robot_state(is_real, publish_robot_state):
@@ -343,7 +343,7 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
             Node(
                 package="robot_state_publisher",
                 executable="robot_state_publisher",
-                name="go2_robot_state_publisher",
+                name="robot_state_publisher",
                 output="screen",
                 parameters=[
                     common,
@@ -358,6 +358,8 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
         )
 ```
 
+（真实分支默认不启动：阶段 A 只验证 Odin SLAM → planner → `/cmd_vel`，不需要机器人模型显示。仿真分支保持原有逻辑。`go2_share` 变量仅仿真分支用到。）
+
 - [ ] **Step 6: 新增 launch 参数声明**
 
 在 `generate_launch_description()` 的 `DeclareLaunchArgument` 列表中追加：
@@ -370,7 +372,7 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
             DeclareLaunchArgument("publish_robot_state", default_value=""),
 ```
 
-（**不加** `cmd_vel_topic`。）
+（**不加** `cmd_vel_topic`，无机器人专属参数。）
 
 - [ ] **Step 7: 人工核对参数真实来源**
 
@@ -545,9 +547,11 @@ git commit -m "test: 注册 topic_resolver / real 脚本契约 pytest 到 colcon
 
 ---
 
-## Task 5: 真机验收（Go2 + ZBNav 链路）
+## Task 5: 真机验收（机器人控制接口）
 
 **Files:** 无代码改动。按序执行，记录每步输出。
+
+> **阶段 A RViz 验收目标**：只检查 `odom/world` frame、`/registered_scan` 点云、local grid map、planning trajectory、planner 状态。**不要求**显示机器人模型、加载 URDF、显示 robot_description。
 
 - [ ] **Step 1: Odin 启动**
 
@@ -571,7 +575,7 @@ ros2 node list          # Expected: 含 scan_planner_node、closed_loop_controll
 ```
 
 另开终端看 RViz：`ros2 launch scan_planner rviz.launch.py`
-Expected：planner 启动无报错；RViz 局部占据地图随 `/registered_scan` 实时更新，`/state_estimation` 位姿变化时滑动窗口跟随。
+Expected：planner 启动无报错；RViz 显示 `odom/world` 帧下的 `/registered_scan` 点云与 local grid map 实时更新，`/state_estimation` 位姿变化时滑动窗口跟随。**不显示机器人模型。**
 
 - [ ] **Step 3: RViz 2D Nav Goal**
 
@@ -585,17 +589,17 @@ ros2 topic hz /planning/bspline
 
 Expected：目标点设置后有稳定输出，轨迹平滑无跳变。
 
-- [ ] **Step 5: /cmd_vel 输出（未接狗）**
+- [ ] **Step 5: /cmd_vel 输出（未接机器人）**
 
 ```bash
 ros2 topic echo /cmd_vel
 ```
 
-Expected：`geometry_msgs/msg/Twist`，目标点设置后非零、随收敛归零。**先确认规划器输出正常，再接狗。**
+Expected：`geometry_msgs/msg/Twist`，目标点设置后非零、随收敛归零。**先确认规划器输出正常，再接机器人控制层。**
 
-- [ ] **Step 6: 接入 Go2**
+- [ ] **Step 6: 接入实际机器人控制层**
 
-确认 Step 2–5 全链路正常后，把 `/cmd_vel` 接入 Go2（ZBNav 已验证接口）。空旷场地点动，再逐步验证避障（Test 0 空旷点到点 / Test 1 静态障碍绕行 / Test 2 近距离障碍）。
+确认 Step 2–5 全链路正常后，把 `/cmd_vel` 接入实际机器人控制层。空旷场地点动，再逐步验证避障（Test 0 空旷点到点 / Test 1 静态障碍绕行 / Test 2 近距离障碍）。机器人控制层与规划器问题分开排查。
 
 - [ ] **Step 7: 收尾**
 
@@ -620,13 +624,15 @@ Expected：`geometry_msgs/msg/Twist`，目标点设置后非零、随收敛归�
 | §6 QoS 兼容性 | Task 0 Step 4 |
 | §8.2 cmd_vel 两阶段验证 | Task 5 Step 5/6 |
 | §8.3 Test 0/1/2 | Task 5 Step 6 |
-| 接口冻结 `/cmd_vel`（ZBNav 收敛） | Global Constraints + Task 2 Step 4 |
+| 接口冻结 `/cmd_vel`（ROS 标准接口） | Global Constraints + Task 2 Step 4 |
 
-**删除项（依 ZBNav 收敛）**：launch/_setup/LaunchContext/Node 测试、`cmd_vel_topic` 参数、planner.yaml pytest 守卫（改人工 grep）、sim 话题细节测试、depth/intrinsics 返回值。
+**工程泛化（依实际部署收敛，本版变更）**：全文移除机器人平台专属假设 —— 目标平台改为"实际四足机器人平台 / 机器人控制接口"；`robot_state_publisher` 节点名通用化（不再带平台前缀）；新增 RViz 验收说明（不要求机器人模型/URDF）；`/cmd_vel` 冻结理由改为"ROS 标准速度接口、与机器人型号无关"。
+
+**删除项（依已有实机导航系统经验收敛）**：launch/_setup/LaunchContext/Node 测试、`cmd_vel_topic` 参数、planner.yaml pytest 守卫（改人工 grep）、sim 话题细节测试、depth/intrinsics 返回值、机器人模型/URDF/TF 相关测试。
 
 **占位符扫描：** 无 TBD/TODO；每个代码步骤含完整代码；Task 0/5 为手动验收，含具体命令与预期输出。
 
-**类型一致性：** `_compute_topics` 返回 5 键在 Task 1 测试与 Task 2 Step 3 逐键一致；`_should_publish_robot_state` 在 Task 1 定义、Task 2 Step 5 消费；node 名 `go2_robot_state_publisher` 与 `run.launch.py` 的 `name=` 一致；`topic_resolver.py` 无 ROS import，测试可独立运行。
+**类型一致性：** `_compute_topics` 返回 5 键在 Task 1 测试与 Task 2 Step 3 逐键一致；`_should_publish_robot_state` 在 Task 1 定义、Task 2 Step 5 消费；node 名 `robot_state_publisher` 与 `run.launch.py` 的 `name=` 一致；`topic_resolver.py` 无 ROS import，测试可独立运行。
 
 **Task 0 验证记录**
 
