@@ -9,6 +9,11 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from topic_resolver import _compute_topics, _should_publish_robot_state
+
 
 def _as_bool(value):
     return value.lower() in ("1", "true", "yes", "on")
@@ -24,6 +29,11 @@ def _setup(context):
     enable_local_sensing = _as_bool(
         LaunchConfiguration("enable_local_sensing").perform(context)
     )
+    body_pose_topic = LaunchConfiguration("body_pose_topic").perform(context)
+    sensor_pose_topic = LaunchConfiguration("sensor_pose_topic").perform(context)
+    cloud_topic = LaunchConfiguration("cloud_topic").perform(context)
+    publish_robot_state = LaunchConfiguration("publish_robot_state").perform(context)
+    # world_frame（默认 odom）仅声明，阶段 A 不做 TF lookup / URDF 加载；保留供阶段 B 帧对齐。
     sensor_type = LaunchConfiguration("sensor_type").perform(context)
     controller_mode = LaunchConfiguration("controller_mode").perform(context)
     keypoints_file = LaunchConfiguration("keypoints_file").perform(context)
@@ -67,31 +77,23 @@ def _setup(context):
         initial_position.append(default if value == "" else float(value))
     init_x, init_y, init_z = initial_position
 
-    if is_real:
-        body_pose = "/LIO/odom_vehicle"
-        sensor_pose = "/LIO/odom_imu"
-        cloud = "/LIO/clouds_lidar"
-        depth = "/camera/aligned_depth_to_color/image_raw"
-        cloud_is_world = False
-        need_extrinsic = True
-        intrinsics = {
-            "grid_map.cx": 317.19183349609375,
-            "grid_map.cy": 256.4806823730469,
-            "grid_map.fx": 609.5884399414062,
-            "grid_map.fy": 609.22021484375,
-        }
-    else:
-        body_pose = "/quad_0/body_pose"
-        sensor_pose = "/quad_0/camera_pose" if sensor_type == "depth" else "/quad_0/lidar_pose"
-        if not enable_local_sensing:
-            # Keep the sliding collision-map window centered even when the
-            # video-only demo intentionally omits the simulated sensor node.
-            sensor_pose = body_pose
-        cloud = "/quad_0/cloud"
-        depth = "/quad_0/depth"
-        cloud_is_world = True
-        need_extrinsic = False
-        intrinsics = {}
+    topics = _compute_topics(
+        is_real=is_real,
+        sensor_type=sensor_type,
+        enable_local_sensing=enable_local_sensing,
+        body_pose_topic=body_pose_topic,
+        sensor_pose_topic=sensor_pose_topic,
+        cloud_topic=cloud_topic,
+    )
+    body_pose = topics["body_pose"]
+    sensor_pose = topics["sensor_pose"]
+    cloud = topics["cloud"]
+    cloud_is_world = topics["cloud_is_world"]
+    need_extrinsic = topics["need_extrinsic"]
+    # Phase A lidar-only deployment.
+    # Depth and intrinsics are reserved for Phase B.
+    depth = ""
+    intrinsics = {}
 
     common = {"use_sim_time": use_sim_time}
     planner_overrides = {
@@ -146,23 +148,29 @@ def _setup(context):
             ],
         )
     ]
-    actions.append(
-        Node(
-            package="robot_state_publisher",
-            executable="robot_state_publisher",
-            name="go2_robot_state_publisher",
-            output="screen",
-            parameters=[
-                common,
-                {
-                    "robot_description": Command(
-                        ["xacro ", os.path.join(go2_share, "xacro", "robot.xacro"),
-                         " use_gazebo:=false"]
-                    )
-                },
-            ],
+    # 真实分支默认不启动 robot_state_publisher（阶段 A 只验证
+    # Odin SLAM → planner → /cmd_vel，不依赖 URDF / robot_description /
+    # 机器人模型 / TF 机器人可视化）。
+    # 仿真分支保持原仓库行为：节点参数块（robot_description 等）原样保留，
+    # 本任务不修改仿真机器人模型来源。
+    if _should_publish_robot_state(is_real, publish_robot_state):
+        actions.append(
+            Node(
+                package="robot_state_publisher",
+                executable="robot_state_publisher",
+                name="robot_state_publisher",
+                output="screen",
+                parameters=[
+                    common,
+                    {
+                        "robot_description": Command(
+                            ["xacro ", os.path.join(go2_share, "xacro", "robot.xacro"),
+                             " use_gazebo:=false"]
+                        )
+                    },
+                ],
+            )
         )
-    )
 
     if controller_mode == "open_loop":
         actions.append(
@@ -192,7 +200,7 @@ def _setup(context):
                 parameters=[controllers_yaml, common],
                 remappings=[
                     ("body_pose", body_pose),
-                    ("cmd_vel", "/cmd_vel" if is_real else "/quad_0/cmd_vel"),
+                    ("cmd_vel", "/cmd_vel"),
                 ],
             )
         )
@@ -215,7 +223,7 @@ def _setup(context):
                     ],
                     remappings=[
                         ("body_pose", "/quad_0/body_pose"),
-                        ("cmd_vel", "/quad_0/cmd_vel"),
+                        ("cmd_vel", "/cmd_vel"),
                     ],
                 )
             )
@@ -301,6 +309,11 @@ def generate_launch_description():
             DeclareLaunchArgument("init_y", default_value=""),
             DeclareLaunchArgument("init_z", default_value=""),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
+            DeclareLaunchArgument("body_pose_topic", default_value=""),
+            DeclareLaunchArgument("sensor_pose_topic", default_value=""),
+            DeclareLaunchArgument("cloud_topic", default_value=""),
+            DeclareLaunchArgument("world_frame", default_value="odom"),
+            DeclareLaunchArgument("publish_robot_state", default_value=""),
             OpaqueFunction(function=_setup),
         ]
     )
