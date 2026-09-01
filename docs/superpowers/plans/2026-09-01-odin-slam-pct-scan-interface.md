@@ -10,7 +10,7 @@
 
 **Spec:** [docs/superpowers/specs/2026-09-01-odin-slam-pct-scan-interface-design.md](../../specs/2026-09-01-odin-slam-pct-scan-interface-design.md)（执行者需同时阅读；本计划按已有实机导航系统经验收敛，接口冻结 `/cmd_vel` 覆盖 spec §9 中 `cmd_vel_topic` 的早期提法）
 
-**重点原则：接口迁移优先，算法零修改；真实链路优先，避免过度工程化。不引入额外抽象层。**
+**重点原则：接口迁移优先，算法零修改；真实链路优先，避免过度工程化。不引入额外抽象层。不引入机器人模型依赖。**
 
 **最终架构（冻结）：**
 
@@ -29,19 +29,20 @@ Odin SLAM
 ## Global Constraints
 
 - 真实分支话题映射：`body_pose ← /state_estimation`、`sensor_pose ← /state_estimation`、`cloud ← /registered_scan`。
-- 真实分支 `grid_map.cloud_is_world=true`、`grid_map.need_extrinsic=false` —— **前提**：`/registered_scan` 已在 odom/world 帧（Task 0 验证）。帧不一致则禁止 `cloud_is_world=true`，需 TF/点云转换节点（**当前不实现**）。
-- **接口冻结**：参考已经成功实机部署的导航系统经验，采用 ROS 标准速度接口 `geometry_msgs/msg/Twist`、topic `/cmd_vel`，**与具体机器人型号无关**。统一不区分真实/仿真：
+- 真实分支 `grid_map.cloud_is_world=true`、`grid_map.need_extrinsic=false` —— **前提**：`/registered_scan` 点云坐标系已与 planner 世界帧（odom）一致（Task 0 验证）。若帧不一致，需确认 TF 或坐标转换关系，禁止直接 `cloud_is_world=true`；阶段 A **不实现转换节点**。
+- **接口冻结**：参考已有实机导航系统经验，采用 ROS 标准速度接口 `geometry_msgs/msg/Twist`、topic `/cmd_vel`，**与机器人型号无关**。统一不区分真实/仿真：
 
   | Interface | Topic | Message |
   |---|---|---|
   | Velocity command | `/cmd_vel` | `geometry_msgs/msg/Twist` |
 
-- **阶段 A 真实分支仅支持 `sensor_type=lidar`**；`is_real_world=true` 搭配 `sensor_type=depth` 必须抛 `ValueError`。
-- **`robot_state_publisher` 条件化**：真实分支**不启动**（阶段 A 只验证 Odin SLAM → planner → `/cmd_vel`，不需要 URDF / robot_description / 机器人模型 / TF 模型可视化）；仿真分支保持原有逻辑。
+- **阶段 A 真实分支仅支持 `sensor_type=lidar`**；`is_real_world=true` 搭配 `sensor_type=depth` 必须抛 `ValueError`。depth 仅 `sensor_type=depth` 时被订阅，阶段 A 不支持。
+- **`robot_state_publisher` 条件化**：真实分支**不启动**（阶段 A 只验证 Odin SLAM → planner → `/cmd_vel`，不依赖 URDF / robot_description / 机器人模型 / TF 机器人可视化）；仿真分支保持原仓库行为。
+- 仿真分支沿用旧仓库 `/quad_0/*` 话题，**仅用于向后兼容，不属于阶段 A 验证范围，不代表目标机器人接口**。
 - `odom` = planner 世界帧；`world_frame` 仅预留，阶段 A 不执行 TF lookup、URDF 加载、机器人模型变换。
-- `_compute_topics` 返回**仅 5 个键**：`body_pose, sensor_pose, cloud, cloud_is_world, need_extrinsic`（depth/intrinsics 留给阶段 B）。
+- `_compute_topics` 返回**仅 5 个键**：`body_pose, sensor_pose, cloud, cloud_is_world, need_extrinsic`（depth/intrinsics 留给阶段 B，阶段 A 置空）。
 - `topic_resolver.py` **无 ROS import、无 LaunchContext、无 Node 创建**，可独立 pytest。
-- **不修改**：`scan_replan_fsm`/`planner_manager`、`plan_env`、`path_searching`、`bspline_opt`、`closed_loop_controller`。
+- **不修改**：`scan_replan_fsm`/`planner_manager`、`plan_env`、`path_searching`、`bspline_opt`、`closed_loop_controller`、仿真机器人模型来源。
 - 不假设 Odin QoS 兼容（spec §6），Task 0 实测记录。
 - 测试用 `PYTHON_EXECUTABLE /usr/bin/python3`（避开 conda python）。
 - 只测轻量纯函数与文件契约，**不测 launch 执行 / _setup / Node 结构**；不加 URDF、robot_description、RViz 模型、TF 机器人模型测试。
@@ -82,15 +83,15 @@ ros2 topic type /state_estimation     # Expected: nav_msgs/msg/Odometry
 
 Expected：两话题有稳定非零频率，类型正确。
 
-- [ ] **Step 3: 帧一致性（关键前提）**
+- [ ] **Step 3: 坐标系一致性（关键前提）**
 
 ```bash
 ros2 topic echo /registered_scan --once
 ros2 topic echo /state_estimation --once
 ```
 
-Expected：`/registered_scan.header.frame_id == /state_estimation.header.frame_id`（应为 `odom` 或 Odin 实际帧名），即点云已在 odom/world 帧。
-**不满足时**：禁止 `cloud_is_world=true`，需 TF/点云转换节点（当前不实现，先停止并汇报）。
+确认：**`/registered_scan` 点云坐标系已与 planner 世界帧（odom）一致**。优先检查 `header.frame_id` 是否一致；若不一致，需确认 TF 或坐标转换关系。
+**不满足时**：禁止 `cloud_is_world=true`，需 TF/点云转换节点（阶段 A 不实现，先停止并汇报）。
 
 - [ ] **Step 4: QoS 记录（不要假设兼容）**
 
@@ -202,8 +203,12 @@ def _compute_topics(
     /registered_scan and /state_estimation both live in the odom frame, which
     Phase A treats as the planner's world frame (see Task 0 frame check).
 
+    Simulation branch keeps the legacy repo's /quad_0/* topics ONLY for
+    backward compatibility; it is NOT Phase A's verification scope and does
+    NOT represent the target robot interface.
+
     Returns dict with keys: body_pose, sensor_pose, cloud, cloud_is_world,
-    need_extrinsic. depth/intrinsics are deferred to Phase B.
+    need_extrinsic. depth/intrinsics are reserved for Phase B.
     """
     if is_real:
         if sensor_type != "lidar":
@@ -289,7 +294,7 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
 
 - [ ] **Step 3: 用 `_compute_topics` 替换 `if is_real: ... else: ...` 整块**
 
-原块（含 depth intrinsics 赋值）替换为：
+原块（含 depth/intrinsics 赋值）替换为：
 
 ```python
     topics = _compute_topics(
@@ -305,11 +310,13 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
     cloud = topics["cloud"]
     cloud_is_world = topics["cloud_is_world"]
     need_extrinsic = topics["need_extrinsic"]
-    depth = "/quad_0/depth" if not is_real else "/camera/aligned_depth_to_color/image_raw"
+    # Phase A lidar-only deployment.
+    # Depth and intrinsics are reserved for Phase B.
+    depth = ""
     intrinsics = {}
 ```
 
-（depth 一行保留仅为 `scan_planner_node` 的 depth remap 提供值；真实分支用 lidar，depth 不被消费。）
+（depth 置空仅保留 `scan_planner_node` 的 depth remap 字段位；`grid_map` 仅在 `sensor_type=depth` 时创建 depth 订阅（见 `plan_env/src/grid_map.cpp`），阶段 A 用 lidar，该字段不被消费，空值安全。）
 
 - [ ] **Step 4: `cmd_vel` 统一为 `/cmd_vel`（接口冻结）**
 
@@ -322,7 +329,7 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
             ],
 ```
 
-仿真分支的速度执行节点（现有仿真节点，保持原逻辑）的 remap 同步改为消费统一话题：
+仿真分支的速度执行节点（现有仿真节点，保持原逻辑；其 body_pose 沿用旧仿真话题）的 remap 同步改为消费统一速度话题：
 
 ```python
                     remappings=[
@@ -335,9 +342,14 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
 
 - [ ] **Step 5: `robot_state_publisher` 条件化**
 
-当前无条件 append 的 `robot_state_publisher` 节点改为（节点名通用化）：
+将当前无条件 `actions.append(Node(package="robot_state_publisher", ...))` 整段包进条件分支，节点 `name=` 改为 `robot_state_publisher`，**节点其余参数（含 robot_description）原样保留、不删减**：
 
 ```python
+    # 真实分支默认不启动 robot_state_publisher（阶段 A 只验证
+    # Odin SLAM → planner → /cmd_vel，不依赖 URDF / robot_description /
+    # 机器人模型 / TF 机器人可视化）。
+    # 仿真分支保持原仓库行为：节点参数块（robot_description 等）原样保留，
+    # 本任务不修改仿真机器人模型来源。
     if _should_publish_robot_state(is_real, publish_robot_state):
         actions.append(
             Node(
@@ -345,20 +357,12 @@ from topic_resolver import _compute_topics, _should_publish_robot_state
                 executable="robot_state_publisher",
                 name="robot_state_publisher",
                 output="screen",
-                parameters=[
-                    common,
-                    {
-                        "robot_description": Command(
-                            ["xacro ", os.path.join(go2_share, "xacro", "robot.xacro"),
-                             " use_gazebo:=false"]
-                        )
-                    },
-                ],
+                parameters=[common],  # 现有 robot_description 参数块原样保留
             )
         )
 ```
 
-（真实分支默认不启动：阶段 A 只验证 Odin SLAM → planner → `/cmd_vel`，不需要机器人模型显示。仿真分支保持原有逻辑。`go2_share` 变量仅仿真分支用到。）
+（若原代码该节点带 `robot_description` 等额外参数，将其合并进 `parameters` 列表，不要删减。）
 
 - [ ] **Step 6: 新增 launch 参数声明**
 
@@ -579,12 +583,20 @@ Expected：planner 启动无报错；RViz 显示 `odom/world` 帧下的 `/regist
 
 - [ ] **Step 3: RViz 2D Nav Goal**
 
-设置目标点后，确认 `planning/bspline` 输出。
+设置目标点后，确认轨迹输出 topic 出现数据。
 
-- [ ] **Step 4: planning/bspline 输出**
+- [ ] **Step 4: 定位并核对轨迹输出 topic**
+
+先发现实际轨迹 topic（不同 fork 名称可能有差异，不硬编码）：
 
 ```bash
-ros2 topic hz /planning/bspline
+ros2 topic list | grep -E "bspline|traj|trajectory"
+```
+
+再对该 topic 测频率：
+
+```bash
+ros2 topic hz <actual_topic>
 ```
 
 Expected：目标点设置后有稳定输出，轨迹平滑无跳变。
@@ -620,17 +632,23 @@ Expected：`geometry_msgs/msg/Twist`，目标点设置后非零、随收敛归�
 | §4.4 起点/速度沿用默认 | Task 5 实测 |
 | §4.5 sensor_pose 外参假设 | Task 1 函数注释 |
 | §4.6 need_extrinsic 代码核对 | Task 2 Step 7（grep 真实来源） |
-| §5 启动前接口验证（帧一致） | **Task 0**（前置） |
+| §5 启动前接口验证（帧一致） | **Task 0**（前置，坐标系一致性表述） |
 | §6 QoS 兼容性 | Task 0 Step 4 |
 | §8.2 cmd_vel 两阶段验证 | Task 5 Step 5/6 |
 | §8.3 Test 0/1/2 | Task 5 Step 6 |
 | 接口冻结 `/cmd_vel`（ROS 标准接口） | Global Constraints + Task 2 Step 4 |
 
-**工程泛化（依实际部署收敛，本版变更）**：全文移除机器人平台专属假设 —— 目标平台改为"实际四足机器人平台 / 机器人控制接口"；`robot_state_publisher` 节点名通用化（不再带平台前缀）；新增 RViz 验收说明（不要求机器人模型/URDF）；`/cmd_vel` 冻结理由改为"ROS 标准速度接口、与机器人型号无关"。
+**最终收敛（本版变更）**：
+- Task 2 Step 5 不再出现机器人模型文件/`robot_description` 构造细节，仅说明"现有 rsp 节点参数原样保留，包进条件分支"。
+- 仿真分支 `/quad_0/*` 明确标注为旧仓库向后兼容、非阶段 A 验证范围、不代表目标机器人接口。
+- depth/intrinsics 置空（`depth=""`、`intrinsics={}`）并注释保留给阶段 B；无任何具体 depth topic 泄漏。
+- 帧检查表述改为"坐标系与 planner 世界帧一致"，不绝对要求 frame_id 字符串相同。
+- Task 5 Step 4 用 `ros2 topic list | grep` 先定位实际轨迹 topic，不硬编码 `/planning/bspline`。
+- `/cmd_vel` 冻结理由保持"ROS 标准速度接口、与机器人型号无关"。
 
-**删除项（依已有实机导航系统经验收敛）**：launch/_setup/LaunchContext/Node 测试、`cmd_vel_topic` 参数、planner.yaml pytest 守卫（改人工 grep）、sim 话题细节测试、depth/intrinsics 返回值、机器人模型/URDF/TF 相关测试。
+**删除项**：launch/_setup/LaunchContext/Node 测试、`cmd_vel_topic` 参数、planner.yaml pytest 守卫（改人工 grep）、sim 话题细节测试、depth/intrinsics 具体值、机器人模型/URDF/TF/模型文件相关引用。
 
-**占位符扫描：** 无 TBD/TODO；每个代码步骤含完整代码；Task 0/5 为手动验收，含具体命令与预期输出。
+**占位符扫描：** 无 TBD/TODO；每个代码步骤含完整代码；Task 0/5 为手动验收，含具体命令与预期输出。Task 2 Step 5 的 `<现有节点参数原样保留>` 为对执行者"照抄现有 robot_state_publisher 节点参数、不删减"的明确指令，非占位。
 
 **类型一致性：** `_compute_topics` 返回 5 键在 Task 1 测试与 Task 2 Step 3 逐键一致；`_should_publish_robot_state` 在 Task 1 定义、Task 2 Step 5 消费；node 名 `robot_state_publisher` 与 `run.launch.py` 的 `name=` 一致；`topic_resolver.py` 无 ROS import，测试可独立运行。
 
