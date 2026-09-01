@@ -49,9 +49,19 @@ cmake -S "$SOURCE_ROOT/gtsam-4.2" -B "$BUILD_ROOT/gtsam-4.2" -GNinja \
 cmake --build "$BUILD_ROOT/gtsam-4.2" --parallel "$JOBS"
 cmake --install "$BUILD_ROOT/gtsam-4.2"
 
-cmake -S "$SOURCE_ROOT/osqp-1.0.0" -B "$BUILD_ROOT/osqp-1.0.0" -GNinja \
-  -DCMAKE_BUILD_TYPE=Release \
+# OSQP 构建时会通过 CMake FetchContent 从 GitHub clone QDLDL（v0.1.8）。
+# 离线/无网环境可设 QDLDL_SOURCE_DIR 指向本地 QDLDL 源码，跳过网络下载。
+_osqp_cmake_args=(
+  -S "$SOURCE_ROOT/osqp-1.0.0"
+  -B "$BUILD_ROOT/osqp-1.0.0"
+  -GNinja
+  -DCMAKE_BUILD_TYPE=Release
   -DCMAKE_INSTALL_PREFIX="$DEPS_ROOT/osqp-1.0.0"
+)
+if [[ -n "${QDLDL_SOURCE_DIR:-}" ]]; then
+  _osqp_cmake_args+=(-DFETCHCONTENT_SOURCE_DIR_QDLDL="$QDLDL_SOURCE_DIR")
+fi
+cmake "${_osqp_cmake_args[@]}"
 cmake --build "$BUILD_ROOT/osqp-1.0.0" --parallel "$JOBS"
 cmake --install "$BUILD_ROOT/osqp-1.0.0"
 
