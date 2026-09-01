@@ -84,7 +84,7 @@ planner (is_real_world=true, closed_loop, navi_mode=1, sensor_type=lidar)
 | cloud | `cloud_topic` | `/registered_scan` |
 | grid_map.cloud_is_world | — | `true` |
 | grid_map.need_extrinsic | — | `false` |
-| cmd_vel | `cmd_vel_topic` | `/cmd_vel`（可覆盖） |
+| cmd_vel | — | `/cmd_vel` |
 
 `cloud_is_world=true` 成立的前提：**`/registered_scan` 点云坐标已位于 odom/world 帧**
 （见第 5 节"启动前接口验证"，实现前置条件）。
@@ -93,7 +93,7 @@ planner (is_real_world=true, closed_loop, navi_mode=1, sensor_type=lidar)
 
 新增 launch 参数（默认随 `is_real_world` 分支）：
 
-- `body_pose_topic`、`sensor_pose_topic`、`cloud_topic`、`cmd_vel_topic`、`world_frame`
+- `body_pose_topic`、`sensor_pose_topic`、`cloud_topic`、`world_frame`
   （`world_frame` 默认 `odom`；阶段 A 中 planner 不使用 TF，该参数被接受但保留供
   阶段 B 帧对齐使用）、`publish_robot_state`。
 
@@ -113,7 +113,7 @@ planner (is_real_world=true, closed_loop, navi_mode=1, sensor_type=lidar)
 - 复用 `scripts/_pct_scan_env.sh`（加载 /opt/ros/humble、工作空间 install、`.deps`）。
 - 拉起：`run.launch.py is_real_world:=true navi_mode:=1 controller_mode:=closed_loop
   sensor_type:=lidar` + 可选 RViz。
-- 参数透传：`use_rviz`、`cmd_vel_topic`、`collision_radius`/`collision_offset`
+- 参数透传：`use_rviz`、`collision_radius`/`collision_offset`
   （机器狗紧凑足迹，参考 PCT-SCAN 约定 0.12）。
 
 ### 4.4 参数与安全
@@ -269,7 +269,7 @@ ros2 topic echo /cmd_vel
 
 | 文件 | 改动 |
 | --- | --- |
-| `src/planner/plan_manage/launch/run.launch.py` | 新增 launch 参数 `body_pose_topic`、`sensor_pose_topic`、`cloud_topic`、`cmd_vel_topic`、`world_frame`、`publish_robot_state`；真实分支默认值改为 Odin 话题；真实分支不启动 robot_state_publisher |
+| `src/planner/plan_manage/launch/run.launch.py` | 新增 launch 参数 `body_pose_topic`、`sensor_pose_topic`、`cloud_topic`、`world_frame`、`publish_robot_state`；真实分支默认值改为 Odin 话题；真实分支不启动 robot_state_publisher |
 | `src/planner/plan_manage/config/planner.yaml` | grid_map 参数（`grid_map.*` 命名空间，仓库**无独立 grid_map.yaml**）：`cloud_is_world=true`、`need_extrinsic=false`；碰撞参数按需 |
 | `scripts/launch_pct_scan_real.sh` | **新增**：真实启动脚本（复用 `_pct_scan_env.sh`，透传参数） |
 

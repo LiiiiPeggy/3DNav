@@ -312,7 +312,7 @@ def generate_launch_description():
             DeclareLaunchArgument("body_pose_topic", default_value=""),
             DeclareLaunchArgument("sensor_pose_topic", default_value=""),
             DeclareLaunchArgument("cloud_topic", default_value=""),
-            DeclareLaunchArgument("world_frame", default_value="odom"),
+            DeclareLaunchArgument("world_frame", default_value="odom"),  # 阶段 B 帧对齐预留；阶段 A 不进行 TF lookup
             DeclareLaunchArgument("publish_robot_state", default_value=""),
             OpaqueFunction(function=_setup),
         ]

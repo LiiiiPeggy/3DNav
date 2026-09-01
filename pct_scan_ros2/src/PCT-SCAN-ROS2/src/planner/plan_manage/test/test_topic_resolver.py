@@ -25,7 +25,7 @@ def test_real_branch_uses_odin_topics():
 
 
 def test_real_branch_rejects_depth():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="lidar"):
         MODULE._compute_topics(is_real=True, sensor_type="depth", enable_local_sensing=True)
 
 

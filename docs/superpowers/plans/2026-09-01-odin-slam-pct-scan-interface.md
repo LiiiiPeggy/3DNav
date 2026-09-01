@@ -102,6 +102,8 @@ ros2 topic info /state_estimation -v
 
 Expected：记录两端 publisher QoS（reliability/history/depth）。后续 planner 收不到数据时按此对齐订阅侧。
 
+**提示**：planner 以 `SensorDataQoS`（best_effort/volatile）订阅 `body_pose`（见 scan_replan_fsm.cpp）；若 Odin 以 reliable QoS 发布 `/state_estimation`，planner 会静默收不到数据——无数据时先核对 QoS，再排查其它。
+
 - [ ] **Step 5: 记录结果并提交（只记录，不改代码）**
 
 把结果追加到本文件末尾「Task 0 验证记录」后：
