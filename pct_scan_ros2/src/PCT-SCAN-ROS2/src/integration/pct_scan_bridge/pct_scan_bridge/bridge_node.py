@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from nav_msgs.msg import Odometry
 
 from pct_planner import planner_node as upstream_planner_node
 
@@ -24,6 +25,72 @@ class PCTScanBridge(upstream_planner_node.PCTPlanner):
         # and its installed files stay untouched.
         upstream_planner_node.TomogramPlanner = DynamicLayerTomogramPlanner
         super().__init__()
+        self._configure_auto_start()
+
+    def _configure_auto_start(self):
+        """start_mode=1（实机预建图默认）：把当前机器人位姿作为 PCT 起点。
+
+        start_mode=1 订阅 /state_estimation，把 Start marker/起点持续吸到当前位姿
+        （plan=False，不会触发重规划）；用户只需设置 Goal。start_mode=0 保持手动
+        （marker / /initialpose），与原行为一致。
+        """
+        self._auto_start_enabled = False
+        self._auto_start_last = None
+        self._in_auto_start = False
+        self.declare_parameter("start_mode", 0)
+        self.declare_parameter("start_pose_odom_topic", "/state_estimation")
+        start_mode = (
+            self.get_parameter("start_mode").get_parameter_value().integer_value
+        )
+        if start_mode != 1:
+            return
+        topic = (
+            self.get_parameter("start_pose_odom_topic")
+            .get_parameter_value()
+            .string_value
+        )
+        if not topic:
+            return
+        self._auto_start_enabled = True
+        self._start_odom_sub = self.create_subscription(
+            Odometry, topic, self._state_estimation_cb, 10
+        )
+        self.get_logger().info(
+            f"start_mode=1: PCT Start 自动取自 {topic}（当前机器人位姿）; 设 Goal 后冻结"
+        )
+
+    def _state_estimation_cb(self, msg):
+        if not self._auto_start_enabled:
+            return
+        pose = msg.pose.pose.position
+        current = np.array([pose.x, pose.y, pose.z], dtype=np.float32)
+        if self._auto_start_last is not None and (
+            np.linalg.norm(current - self._auto_start_last) < 0.15
+        ):
+            return
+        self._auto_start_last = current
+        self._in_auto_start = True
+        try:
+            self.set_start(
+                float(pose.x), float(pose.y), float(pose.z),
+                plan=False, update_marker=True,
+            )
+        except Exception as error:  # planner 未就绪时静默等待下一帧
+            self.get_logger().debug(f"auto-start skipped: {error}")
+        finally:
+            self._in_auto_start = False
+
+    def set_start(self, x, y, z, plan=True, update_marker=True):
+        # 手动移动 Start（marker / /initialpose）会关闭自动跟随。
+        if not self._in_auto_start and getattr(self, "_auto_start_enabled", False):
+            self._auto_start_enabled = False
+        super().set_start(x, y, z, plan=plan, update_marker=update_marker)
+
+    def set_goal(self, x, y, z, plan=True, update_marker=True):
+        # 一旦用户设 Goal，冻结自动 Start，避免跟踪中起点漂移。
+        if getattr(self, "_auto_start_enabled", False):
+            self._auto_start_enabled = False
+        super().set_goal(x, y, z, plan=plan, update_marker=update_marker)
 
     def configure_scene(self, scene_name):
         # The upstream node calls configure_scene() after rclpy.Node has been

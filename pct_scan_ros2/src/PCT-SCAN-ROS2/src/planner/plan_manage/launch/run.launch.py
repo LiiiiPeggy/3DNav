@@ -33,7 +33,9 @@ def _setup(context):
     sensor_pose_topic = LaunchConfiguration("sensor_pose_topic").perform(context)
     cloud_topic = LaunchConfiguration("cloud_topic").perform(context)
     publish_robot_state = LaunchConfiguration("publish_robot_state").perform(context)
-    # world_frame（默认 odom）仅声明，阶段 A 不做 TF lookup / URDF 加载；保留供阶段 B 帧对齐。
+    # Phase B（预建图导航）：world_frame 非空时把 SCAN 局部地图发布帧 grid_map.frame_id
+    # 覆盖为该帧（如 odin_map）；默认空 = 无图模式原行为（沿用 planner.yaml 的 world）。
+    world_frame_text = LaunchConfiguration("world_frame").perform(context)
     sensor_type = LaunchConfiguration("sensor_type").perform(context)
     controller_mode = LaunchConfiguration("controller_mode").perform(context)
     keypoints_file = LaunchConfiguration("keypoints_file").perform(context)
@@ -108,6 +110,11 @@ def _setup(context):
         "grid_map.cloud_is_world": cloud_is_world,
         "grid_map.need_extrinsic": need_extrinsic,
     }
+    if world_frame_text:
+        planner_overrides["grid_map.frame_id"] = world_frame_text
+        print(f"[SCAN] Override grid_map.frame_id = {world_frame_text}")
+    else:
+        print("[SCAN] Using default grid_map frame (planner.yaml)")
     if max_vel_text:
         max_vel = float(max_vel_text)
         if max_vel <= 0.0:
@@ -314,7 +321,7 @@ def generate_launch_description():
             DeclareLaunchArgument("body_pose_topic", default_value=""),
             DeclareLaunchArgument("sensor_pose_topic", default_value=""),
             DeclareLaunchArgument("cloud_topic", default_value=""),
-            DeclareLaunchArgument("world_frame", default_value="odom"),  # 阶段 B 帧对齐预留；阶段 A 不进行 TF lookup
+            DeclareLaunchArgument("world_frame", default_value=""),  # 空=无图原行为；预建图传 odin_map 覆盖 grid_map.frame_id
             DeclareLaunchArgument("publish_robot_state", default_value=""),
             OpaqueFunction(function=_setup),
         ]

@@ -84,6 +84,11 @@ if(BUILD_TESTING)
     test/test_launch_pct_scan_real.py
     PYTHON_EXECUTABLE /usr/bin/python3
     ENV PYTEST_DISABLE_PLUGIN_AUTOLOAD=1)
+  ament_add_pytest_test(
+    test_prebuilt_mode
+    test/test_prebuilt_mode.py
+    PYTHON_EXECUTABLE /usr/bin/python3
+    ENV PYTEST_DISABLE_PLUGIN_AUTOLOAD=1)
   set(ENV{PYTEST_DISABLE_PLUGIN_AUTOLOAD} "${_pytest_disable_plugin_autoload}")
   add_launch_test(test/test_planner_startup.py TIMEOUT 30)
   add_launch_test(test/test_reference_path_publisher_launch.py TIMEOUT 30)
