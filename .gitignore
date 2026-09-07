@@ -28,3 +28,10 @@ pct_scan_fastlio_ros1/logs/
 # Python
 __pycache__/
 *.pyc
+
+# 大体积地图源 PCD / 传输打包产物（不入库；地图经 tar 同步到机器狗）
+pct_scan_ros2_arm.tar.gz
+/map.pcd
+setup_pct_dependencies.sh
+pct_scan_ros2/src/PCT-SCAN-ROS2/maps/*.pcd
+pct_scan_ros2/src/PCT-SCAN-ROS2/maps/RUN_LOG/

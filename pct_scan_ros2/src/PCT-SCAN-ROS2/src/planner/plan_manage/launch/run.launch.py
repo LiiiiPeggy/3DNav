@@ -142,10 +142,12 @@ def _setup(context):
                 ("body_pose", body_pose),
                 ("sensor_pose", sensor_pose),
                 ("cloud", cloud),
-                ("depth", depth),
                 ("move_base_simple/goal", "/move_base_simple/goal"),
                 ("initial_path", initial_path_topic),
-            ],
+            ]
+            # Phase A lidar-only：depth 为空时不要生成 `-r depth:=` 空 remap
+            # （rcl 无法解析空 remap 规则，会直接导致节点 SIGABRT）。
+            + ([("depth", depth)] if depth else []),
         )
     ]
     # 真实分支默认不启动 robot_state_publisher（阶段 A 只验证
